@@ -1,0 +1,164 @@
+= Lab: Using Terraform Expressions and Functions in a Local Configuration
+
+== Objective
+
+This lab focuses on Terraform expressions and functions, enabling you to:
+
+1. Use string and arithmetic expressions.
+2. Leverage built-in Terraform functions (e.g., `join`, `split`, `merge`, `cidrhost`, and `timestamp`).
+3. Dynamically configure resources using Terraform.
+
+== Scenario
+
+You are tasked with creating a configuration file that contains:
+
+1. A dynamically generated project name based on variables.
+2. A split list of IP addresses extracted from a CIDR range.
+3. A timestamp of when the configuration was applied.
+4. Merged metadata for a project.
+
+== Prerequisites
+
+1. Terraform installed locally.
+2. A basic understanding of Terraform syntax.
+
+== Steps
+
+=== Step 1: Set Up the Project Directory
+
+1. Create a directory for the lab:
+[source,bash]
+----
+mkdir terraform_lab_expressions
+cd terraform_lab_expressions
+----
+
+2. Create the following files:
+   * `main.tf`
+   * `variables.tf`
+   * `output.tf`
+
+=== Step 2: Define Variables
+
+Open `variables.tf` and define variables for the project name and network CIDR block.
+
+[source,hcl]
+----
+variable "project_name" {
+  description = "Base name of the project"
+  default     = "TerraformLab"
+}
+
+variable "cidr_block" {
+  description = "CIDR block for the network"
+  default     = "192.168.0.0/24"
+}
+
+variable "metadata" {
+  description = "Project metadata tags"
+  type        = map(string)
+  default     = {
+    environment = "development"
+    owner       = "team"
+  }
+}
+----
+
+=== Step 3: Configure Outputs with Expressions and Functions
+
+Open `main.tf` and use expressions and functions to dynamically generate outputs.
+
+[source,hcl]
+----
+# Dynamic Project Name
+output "dynamic_project_name" {
+  description = "The dynamically generated project name"
+  value       = join("-", [var.project_name, "v1"])
+}
+
+# Base IP Address
+output "base_ip" {
+  description = "The base IP address of the CIDR block"
+  value       = split("/", var.cidr_block)[0]
+}
+
+# Tenth Host IP Address
+output "host_ip" {
+  description = "The 10th host IP address in the CIDR block"
+  value       = cidrhost(var.cidr_block, 10)
+}
+
+# Current Timestamp
+output "configuration_time" {
+  description = "The time when the configuration was applied"
+  value       = timestamp()
+}
+
+# Merged Metadata
+output "merged_metadata" {
+  description = "Combined metadata for the project"
+  value       = merge(var.metadata, { project_name = var.project_name })
+}
+----
+
+=== Step 4: Initialize and Apply
+
+1. Initialize Terraform:
+[source,bash]
+----
+terraform init
+----
+
+2. Apply the configuration:
+[source,bash]
+----
+terraform apply
+----
+
+3. Confirm the apply process by typing `yes`.
+
+== Expected Outputs
+
+=== Dynamic Project Name
+[source,plaintext]
+----
+dynamic_project_name = "TerraformLab-v1"
+----
+
+=== Base IP Address
+[source,plaintext]
+----
+base_ip = "192.168.0.0"
+----
+
+=== Tenth Host IP Address
+[source,plaintext]
+----
+host_ip = "192.168.0.10"
+----
+
+=== Configuration Time
+[source,plaintext]
+----
+configuration_time = "2024-12-28T12:00:00Z"
+----
+
+=== Merged Metadata
+[source,plaintext]
+----
+merged_metadata = {
+  "environment" = "development"
+  "owner" = "team"
+  "project_name" = "TerraformLab"
+}
+----
+
+== Summary
+
+In this lab, you:
+
+1. Used expressions (`join`, `split`, `cidrhost`) to dynamically generate values.
+2. Leveraged the `timestamp` function for logging.
+3. Dynamically merged metadata tags with project details using `merge`.
+
+This lab demonstrates how Terraform functions and expressions make configurations more adaptable and efficient without relying on cloud-specific resources.
