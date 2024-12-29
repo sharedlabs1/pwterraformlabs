@@ -1,0 +1,236 @@
+= Lab: Creating a Terraform Project to Set Up AWS Architecture for Deploying a Basic Application
+
+== Objective
+
+This lab will guide you through creating a Terraform project to set up AWS architecture for deploying a basic web application. By the end of the lab, you will:
+
+1. Use Terraform to provision resources in AWS.
+2. Deploy a basic web application hosted on an EC2 instance.
+3. Understand the structure of a Terraform project.
+
+== Scenario
+
+**Background**: A company wants to deploy a basic web application using AWS. The application will run on an EC2 instance with the following architecture:
+
+1. A VPC with a public subnet.
+2. An EC2 instance in the public subnet running a basic HTTP server.
+3. A security group to allow HTTP (port 80) access from the internet.
+
+== Prerequisites
+
+1. AWS CLI configured with valid credentials.
+2. Terraform installed locally.
+3. Basic understanding of AWS and Terraform.
+
+== Steps
+
+=== Step 1: Set Up the Project Directory
+
+1. Create a directory for the Terraform project:
+[source,bash]
+----
+mkdir terraform_project_basic_app
+cd terraform_project_basic_app
+----
+
+2. Create the following files:
+   * `main.tf`
+   * `variables.tf`
+   * `output.tf`
+
+=== Step 2: Define Variables
+
+Open `variables.tf` and define variables for the project.
+
+[source,hcl]
+----
+variable "aws_region" {
+  description = "The AWS region to deploy resources"
+  default     = "us-east-1"
+}
+
+variable "vpc_cidr" {
+  description = "CIDR block for the VPC"
+  default     = "10.0.0.0/16"
+}
+
+variable "subnet_cidr" {
+  description = "CIDR block for the public subnet"
+  default     = "10.0.1.0/24"
+}
+
+variable "instance_type" {
+  description = "The EC2 instance type"
+  default     = "t2.micro"
+}
+
+variable "key_pair_name" {
+  description = "The name of the key pair for SSH access"
+  default     = "my-key-pair"
+}
+----
+
+=== Step 3: Configure Resources in `main.tf`
+
+Open `main.tf` and define the resources for the architecture.
+
+[source,hcl]
+----
+provider "aws" {
+  region = var.aws_region
+}
+
+# Create a VPC
+resource "aws_vpc" "main" {
+  cidr_block           = var.vpc_cidr
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+  tags = {
+    Name = "BasicAppVPC"
+  }
+}
+
+# Create a public subnet
+resource "aws_subnet" "public" {
+  vpc_id     = aws_vpc.main.id
+  cidr_block = var.subnet_cidr
+  map_public_ip_on_launch = true
+  tags = {
+    Name = "PublicSubnet"
+  }
+}
+
+# Create an Internet Gateway
+resource "aws_internet_gateway" "main" {
+  vpc_id = aws_vpc.main.id
+  tags = {
+    Name = "InternetGateway"
+  }
+}
+
+# Create a route table for the public subnet
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.main.id
+  }
+
+  tags = {
+    Name = "PublicRouteTable"
+  }
+}
+
+# Associate the route table with the public subnet
+resource "aws_route_table_association" "public" {
+  subnet_id      = aws_subnet.public.id
+  route_table_id = aws_route_table.public.id
+}
+
+# Create a security group
+resource "aws_security_group" "web_sg" {
+  vpc_id = aws_vpc.main.id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "WebSecurityGroup"
+  }
+}
+
+# Launch an EC2 instance
+resource "aws_instance" "web" {
+  ami           = "ami-0c02fb55956c7d316" # Amazon Linux 2 AMI
+  instance_type = var.instance_type
+  subnet_id     = aws_subnet.public.id
+  security_groups = [aws_security_group.web_sg.name]
+  key_name      = var.key_pair_name
+
+  user_data = <<-EOF
+              #!/bin/bash
+              yum update -y
+              yum install -y httpd
+              systemctl start httpd
+              systemctl enable httpd
+              echo "<h1>Welcome to Terraform Deployed Web App</h1>" > /var/www/html/index.html
+              EOF
+
+  tags = {
+    Name = "WebInstance"
+  }
+}
+----
+
+=== Step 4: Define Outputs
+
+Open `output.tf` and define outputs to display the application details.
+
+[source,hcl]
+----
+output "ec2_public_ip" {
+  description = "The public IP address of the web instance"
+  value       = aws_instance.web.public_ip
+}
+
+output "ec2_public_dns" {
+  description = "The public DNS of the web instance"
+  value       = aws_instance.web.public_dns
+}
+----
+
+=== Step 5: Initialize and Deploy
+
+1. Initialize Terraform:
+[source,bash]
+----
+terraform init
+----
+
+2. Plan the configuration:
+[source,bash]
+----
+terraform plan
+----
+
+3. Apply the configuration:
+[source,bash]
+----
+terraform apply
+----
+
+4. Confirm the apply process by typing `yes` when prompted.
+
+5. Once the deployment completes, note the public IP and DNS outputs.
+
+=== Step 6: Test the Application
+
+1. Open a web browser and navigate to the EC2 instance's public IP address.
+2. Verify that the page displays:
+
+```
+<h1>Welcome to Terraform Deployed Web App</h1>
+```
+
+== Summary
+
+In this lab, you:
+
+1. Configured a Terraform project to set up AWS architecture.
+2. Created a VPC, public subnet, security group, and EC2 instance.
+3. Deployed a basic web application on the EC2 instance.
+4. Verified the deployment through the application URL.
+
+This lab demonstrates how Terraform simplifies the provisioning of AWS infrastructure and application deployment.
