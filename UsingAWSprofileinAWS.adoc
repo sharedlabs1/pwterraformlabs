@@ -1,0 +1,182 @@
+= Lab: Using Multiple AWS Profiles in Terraform
+
+== Objective
+
+This lab will help learners:
+
+1. Understand how to configure and use multiple AWS profiles locally.
+2. Implement Terraform configurations that use these profiles dynamically.
+
+== Scenario
+
+**Background**: A company has two environments: development and production. Each environment requires separate AWS credentials. The Terraform configuration must:
+
+- Use the correct AWS profile dynamically based on the specified environment.
+- Deploy a simple local resource configuration to simulate different environments.
+
+== Prerequisites
+
+1. AWS CLI installed and configured.
+2. Terraform installed locally.
+3. Basic understanding of AWS CLI and Terraform.
+
+== Steps
+
+=== Step 1: Set Up AWS Profiles
+
+1. Configure AWS CLI with two profiles, `dev` and `prod`:
+[source,bash]
+----
+aws configure --profile dev
+----
+Enter the following details when prompted:
+- AWS Access Key ID: `<Your-Dev-Access-Key>`
+- AWS Secret Access Key: `<Your-Dev-Secret-Key>`
+- Default region: `us-west-1`
+
+[source,bash]
+----
+aws configure --profile prod
+----
+Enter the following details for production:
+- AWS Access Key ID: `<Your-Prod-Access-Key>`
+- AWS Secret Access Key: `<Your-Prod-Secret-Key>`
+- Default region: `us-east-1`
+
+2. Verify the profiles:
+[source,bash]
+----
+aws configure list --profile dev
+aws configure list --profile prod
+----
+
+=== Step 2: Define Variables
+
+Open `variables.tf` and define the environment variable to switch between profiles.
+
+[source,hcl]
+----
+variable "environment" {
+  description = "The environment to use (dev or prod)"
+  type        = string
+  default     = "dev"
+}
+----
+
+=== Step 3: Configure AWS Provider
+
+Open `main.tf` and configure the AWS provider to use multiple profiles dynamically.
+
+[source,hcl]
+----
+provider "aws" {
+  profile = var.environment
+  region  = var.environment == "dev" ? "us-west-1" : "us-east-1"
+}
+
+resource "local_file" "example" {
+  filename = "${var.environment}_profile_info.txt"
+  content  = <<EOT
+Profile: ${var.environment}
+Region: ${var.environment == "dev" ? "us-west-1" : "us-east-1"}
+EOT
+}
+----
+
+=== Step 4: Add Outputs
+
+In `output.tf`, define outputs to confirm the profile and region used.
+
+[source,hcl]
+----
+output "active_profile" {
+  description = "The active AWS profile"
+  value       = var.environment
+}
+
+output "active_region" {
+  description = "The AWS region in use"
+  value       = var.environment == "dev" ? "us-west-1" : "us-east-1"
+}
+----
+
+=== Step 5: Initialize and Apply Configuration
+
+1. Initialize Terraform:
+[source,bash]
+----
+terraform init
+----
+
+2. Plan the configuration to verify the setup:
+[source,bash]
+----
+terraform plan -var="environment=dev"
+----
+
+3. Apply the configuration for the development environment:
+[source,bash]
+----
+terraform apply -var="environment=dev"
+----
+
+4. Check the created file `dev_profile_info.txt` for the profile and region details:
+[source,bash]
+----
+cat dev_profile_info.txt
+----
+
+5. Repeat for the production environment:
+[source,bash]
+----
+terraform apply -var="environment=prod"
+----
+
+6. Check the created file `prod_profile_info.txt` for the profile and region details:
+[source,bash]
+----
+cat prod_profile_info.txt
+----
+
+== Expected Outputs
+
+=== Outputs in Terminal
+1. For `dev` environment:
+[source,plaintext]
+----
+active_profile = "dev"
+active_region  = "us-west-1"
+----
+
+2. For `prod` environment:
+[source,plaintext]
+----
+active_profile = "prod"
+active_region  = "us-east-1"
+----
+
+=== File Content
+
+For `dev_profile_info.txt`:
+[source,plaintext]
+----
+Profile: dev
+Region: us-west-1
+----
+
+For `prod_profile_info.txt`:
+[source,plaintext]
+----
+Profile: prod
+Region: us-east-1
+----
+
+== Summary
+
+In this lab, you learned:
+
+1. How to configure and verify multiple AWS CLI profiles.
+2. How to use Terraform's `provider` block with dynamic profiles.
+3. How to switch between AWS profiles and regions using a single variable.
+
+This approach ensures flexible and reusable Terraform configurations for managing multiple environments efficiently.
