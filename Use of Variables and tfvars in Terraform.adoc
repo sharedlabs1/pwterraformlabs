@@ -1,0 +1,127 @@
+= Lab Objective: Demonstrating the Use of Variables and tfvars in Terraform
+
+== Lab Overview
+
+In this lab, we will demonstrate how using Terraform variables and `tfvars` files can make your infrastructure configurations more **dynamic** and **reusable**. By using variables, we can avoid hardcoding values and make it easier to configure and maintain Terraform configurations across different environments.
+
+**Key Concepts:**
+- **variables.tf**: Defines variables that will be used across your Terraform configuration.
+- **tfvars file**: A file that contains the actual values for the variables, allowing you to reuse the same Terraform configuration with different input values.
+
+== Scenario
+
+### Use Case
+
+You are responsible for provisioning **EC2 instances** on AWS using Terraform. However, your organization wants to deploy the same infrastructure in different environments (e.g., **Development**, **Production**) with different settings, such as:
+- EC2 instance types
+- AMI IDs
+- Tags for identification
+
+Instead of modifying the Terraform configuration each time, we can use **variables** to parameterize these values. Using a `variables.tf` file to define the variables and a `terraform.tfvars` file to specify values allows you to reuse the same Terraform configuration in multiple environments by simply changing the values in the `tfvars` file.
+
+### Lab Objective
+
+In this lab, you will:
+1. Create a `variables.tf` file to define variables.
+2. Create a `terraform.tfvars` file to provide the values for these variables.
+3. Use these variables in the main Terraform configuration to provision an EC2 instance with different configurations based on the environment.
+
+== Steps to Implement
+
+### Step 1: Create `variables.tf` to Define Variables
+
+In the `variables.tf` file, we define all the variables that will be used in our Terraform configuration.
+
+[source,hcl]
+----
+# variables.tf
+
+variable "instance_type" {
+  description = "The type of EC2 instance to create"
+  type        = string
+  default     = "t2.micro"  # Default value (can be overridden in tfvars)
+}
+
+variable "ami_id" {
+  description = "AMI ID to use for the EC2 instance"
+  type        = string
+}
+
+variable "environment" {
+  description = "The environment (e.g., Development, Production)"
+  type        = string
+}
+
+variable "instance_name" {
+  description = "Name for the EC2 instance"
+  type        = string
+}
+----
+
+### Step 2: Create `terraform.tfvars` to Provide Values for Variables
+
+In the `terraform.tfvars` file, we provide specific values for the variables defined in `variables.tf`.
+
+[source,hcl]
+----
+# terraform.tfvars
+
+instance_type = "t2.small"
+ami_id        = "ami-0abcdef1234567890"  # Example AMI ID
+environment   = "Development"
+instance_name = "dev-server"
+----
+
+### Step 3: Main Terraform Configuration to Use Variables
+
+In the main Terraform configuration (e.g., `main.tf`), we reference the variables defined in `variables.tf` and supplied in `terraform.tfvars`.
+
+[source,hcl]
+----
+# main.tf
+
+provider "aws" {
+  region = "us-west-2"
+}
+
+resource "aws_instance" "example" {
+  ami           = var.ami_id
+  instance_type = var.instance_type
+  tags = {
+    Name        = var.instance_name
+    Environment = var.environment
+  }
+}
+----
+
+### Step 4: Apply the Configuration
+
+To apply the Terraform configuration:
+
+1. **Initialize Terraform**:  
+   Run `terraform init` to initialize the working directory and download the necessary providers.
+
+2. **Plan the Deployment**:  
+   Run `terraform plan` to see the changes that will be made.
+
+3. **Apply the Configuration**:  
+   Run `terraform apply` to provision the resources.
+
+### Step 5: Modifying `terraform.tfvars` for Different Environments
+
+You can modify the `terraform.tfvars` file to deploy the same infrastructure in different environments (e.g., Development, Production) by changing the values of the variables.
+
+For example, for the **Production** environment, you could create a new `terraform.production.tfvars` file:
+
+[source,hcl]
+----
+# terraform.production.tfvars
+
+instance_type = "t3.medium"
+ami_id        = "ami-0987654321abcdef0"  # Different AMI ID for production
+environment   = "Production"
+instance_name = "prod-server"
+----
+
+To apply the configuration with the Production values, run:
+
