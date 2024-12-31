@@ -1,0 +1,185 @@
+= Terraform State Import Lab
+John Doe <john.doe@example.com>
+v1.0, 2024-12-31
+
+An interactive lab demonstrating how to import existing cloud resources into Terraform state and manage drift detection between the actual infrastructure and Terraform’s local state.
+
+== Lab Overview
+
+In this lab, you will:
+- Set up a scenario where an existing cloud resource is created outside of Terraform.
+- Write Terraform configuration to manage that resource.
+- Use `terraform import` to bring the existing resource into Terraform state.
+- Manage and detect drift between the actual infrastructure and Terraform state.
+
+== Prerequisites
+
+1. **Terraform Installed**: Ensure you have Terraform v1.x or above installed.
+2. **Cloud Provider Credentials**: For this lab, we will use AWS as an example. Have AWS credentials configured (e.g., via `aws configure`).
+3. **Terminal or Shell Access**: A command-line environment is required to run Terraform commands.
+
+== Section 1: Scenario Setup
+
+We will use an AWS S3 bucket as the existing resource. Assume a bucket was created manually via the AWS console or CLI. For demonstration, the bucket name is `import-lab-bucket-12345` (unique name required).
+
+1. **Manually create the bucket** (if you haven't already):
+   - Go to the AWS Console S3 service.
+   - Create a new S3 bucket named `import-lab-bucket-12345`. 
+   - Make sure it is created in the `us-east-1` region (or your preferred region).
+
+2. **Verify** the bucket exists:
+----
+aws s3 ls | grep import-lab-bucket-12345
+----
+
+You should see the bucket listed.
+
+== Section 2: Terraform Configuration
+
+Now we will create a Terraform configuration to manage this existing bucket.
+
+.Create a working directory
+----
+mkdir terraform-import-lab
+cd terraform-import-lab
+----
+
+.Create a `main.tf` file
+----
+vi main.tf
+----
+
+Paste the following content into `main.tf`:
+
+----
+provider "aws" {
+  region = "us-east-1"
+}
+
+resource "aws_s3_bucket" "imported_bucket" {
+  # Intentionally left without the 'bucket' argument for now
+  # We'll fill it after import
+}
+----
+
+We have defined a resource for the S3 bucket, but notice we have not specified the `bucket` name. This is because we need to align the resource definition with the real bucket name after we import.
+
+== Section 3: Importing the Existing Resource
+
+### Step 3.1: Initialize Terraform
+
+1. **Initialize** Terraform in the current directory:
+----
+terraform init
+----
+
+### Step 3.2: Perform the Import
+
+We will import the manually created S3 bucket into the Terraform state under the resource name `aws_s3_bucket.imported_bucket`.
+
+1. **Import** command:
+----
+terraform import aws_s3_bucket.imported_bucket import-lab-bucket-12345
+----
+
+Terraform will establish a state entry for this resource. If successful, it will report something like:
+
+----
+aws_s3_bucket.imported_bucket: Import prepared!
+  Prepared aws_s3_bucket for import
+aws_s3_bucket.imported_bucket: Refreshing state... [id=import-lab-bucket-12345]
+Import successful!
+----
+
+2. **Check** that the bucket is now in state:
+----
+terraform state list
+----
+
+You should see `aws_s3_bucket.imported_bucket`.
+
+### Step 3.3: Inspect the Imported Resource
+
+1. **Show** the imported resource:
+----
+terraform state show aws_s3_bucket.imported_bucket
+----
+
+Terraform will display all tracked attributes for the `import-lab-bucket-12345`.
+
+== Section 4: Aligning the Configuration
+
+Although the resource is now in state, our `main.tf` does not specify the bucket name. We need to align the Terraform configuration with reality so that subsequent `plan` or `apply` commands do not try to recreate or alter the resource incorrectly.
+
+1. **Update `main.tf`** to match the real bucket name:
+----
+resource "aws_s3_bucket" "imported_bucket" {
+  bucket = "import-lab-bucket-12345"
+}
+----
+
+2. **Plan** the changes:
+----
+terraform plan
+----
+
+If everything aligns properly, Terraform should report **no changes** (or minimal updates if the S3 bucket has defaults that differ from the resource block). If the plan attempts to make changes, investigate differences and either accept them or adjust your Terraform configuration accordingly.
+
+== Section 5: Drift Detection
+
+Drift occurs when changes are made outside of Terraform. Let’s simulate drift on our imported resource to see how Terraform reacts.
+
+1. **Modify** the bucket’s ACL or versioning settings manually in the AWS console. For instance, enable versioning or change the bucket’s ACL to public read (not recommended in production, but for demonstration here).
+
+2. **Run** a new plan:
+----
+terraform plan
+----
+
+Terraform will show the differences between the actual infrastructure (with drift) and your local configuration. You can:
+- Update `main.tf` to match the new reality, or
+- Apply Terraform to revert the resource back to its original configuration.
+
+== Section 6: Cleanup (Optional)
+
+If you wish to remove the S3 bucket after the lab:
+
+----
+terraform destroy -auto-approve
+----
+
+Note that if the bucket has content and versioning enabled, you may need to remove objects or disable versioning before destroy will succeed.
+
+== Section 7: Case Study Example
+
+Imagine your company discovered an S3 bucket created manually for a quick proof-of-concept. Weeks later, the DevOps team wants to manage all infrastructure through Terraform for consistency and repeatability. By using `terraform import`, you align the existing resource with your Terraform configuration, ensuring future modifications are made and tracked via Terraform.
+
+== Section 8: Best Practices for Import and Drift Management
+
+1. **Validate Resource Configuration Post-Import**  
+   - After importing, always update your `.tf` files to accurately reflect the resource’s settings.
+
+2. **Review `terraform plan` Outputs**  
+   - Regularly run `terraform plan` to detect unexpected drift and ensure no manual changes have occurred out of process.
+
+3. **Minimize Manual Changes**  
+   - Encourage teams to use Terraform for all infrastructure changes to avoid drift. If manual changes are necessary, document them and update the Terraform configuration accordingly.
+
+4. **Use Remote State**  
+   - Store Terraform state in a remote backend (e.g., S3, DynamoDB, or Terraform Cloud) for collaboration and to enable state locking.
+
+5. **Keep Sensitive Values Out of State**  
+   - Terraform state can contain sensitive data (like secrets). Use encryption and do not commit state files to version control.
+
+6. **Test in Non-Production Environments**  
+   - Practice the import process in a sandbox environment to become familiar with potential pitfalls.
+
+== Conclusion
+
+In this lab, you:
+- Learned how to import an existing S3 bucket into Terraform state using `terraform import`.
+- Aligned your Terraform configuration to match the real infrastructure.
+- Simulated and managed drift detection by modifying the resource outside Terraform, then running `terraform plan`.
+- Explored best practices for using import and handling infrastructure drift.
+
+By following these steps, you can systematically bring non-Terraform-managed resources under Terraform management, detect and remediate drift, and maintain consistent, reliable infrastructure as code.
