@@ -1,0 +1,199 @@
+= Lab Guide: AWS Infrastructure Automation using `local-exec` and AWS CLI
+:author: Terraform Expert
+:date: 2024-12-31
+:doctype: book
+
+== Objective
+In this lab, you will automate the creation of AWS infrastructure using Terraform. You will also use the **`local-exec` provisioner** in Terraform to trigger post-provisioning tasks by invoking AWS CLI commands. Specifically, you will create an EC2 instance and use `local-exec` to interact with AWS services, such as creating an S3 bucket and uploading a file, using the AWS CLI.
+
+By the end of this lab, you will understand how to automate both infrastructure provisioning and post-provisioning operations using Terraform and the AWS CLI.
+
+== Scenario
+You need to provision an **EC2 instance** in AWS using Terraform and then automate the process of creating an **S3 bucket** and uploading a file to it using the **AWS CLI**. The **`local-exec` provisioner** will be used to execute AWS CLI commands on your local machine, after the EC2 instance is created, to automate the creation of the S3 bucket and file upload.
+
+== Lab Steps
+
+=== 1. Set Up AWS Credentials
+Ensure that you have configured AWS credentials (either using environment variables or AWS credentials file) to allow Terraform and the AWS CLI to create and manage resources.
+
+Example:
+[source,bash]
+----
+export AWS_ACCESS_KEY_ID="your_access_key"
+export AWS_SECRET_ACCESS_KEY="your_secret_key"
+export AWS_DEFAULT_REGION="us-east-1"
+----
+
+Ensure that the **AWS CLI** is installed and configured with the same credentials.
+
+[source,bash]
+----
+aws configure
+----
+
+=== 2. Create Terraform Configuration
+1. **Create a new directory** for your Terraform configuration files.
+
+[source,bash]
+----
+mkdir terraform-local-exec
+cd terraform-local-exec
+----
+
+2. **Create a `main.tf` file** to define your AWS EC2 instance and the `local-exec` provisioner to trigger AWS CLI commands.
+
+[source,hcl]
+----
+# main.tf
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+resource "aws_instance" "example" {
+  ami           = "ami-0c55b159cbfafe1f0"  # Ubuntu 20.04 LTS AMI ID for your region
+  instance_type = "t2.micro"
+
+  # Security Group to allow SSH
+  security_groups = ["allow_ssh"]
+
+  # User data to install AWS CLI
+  user_data = <<-EOF
+              #!/bin/bash
+              apt-get update
+              apt-get install -y awscli
+              EOF
+
+  # Define Local-exec Provisioner
+  provisioner "local-exec" {
+    command = "aws s3 mb s3://my-terraform-bucket && aws s3 cp ./sample_file.txt s3://my-terraform-bucket/"
+  }
+
+  # Connection details for SSH
+  connection {
+    type        = "ssh"
+    user        = "ubuntu"
+    private_key = file("~/.ssh/id_rsa")
+    host        = self.public_ip
+  }
+}
+
+resource "aws_security_group" "allow_ssh" {
+  name        = "allow_ssh"
+  description = "Allow SSH access"
+  
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+----
+
+In this configuration:
+- An EC2 instance (`aws_instance`) is provisioned with Ubuntu and the AWS CLI installed via user data.
+- A **`local-exec` provisioner** is used to create an S3 bucket (`my-terraform-bucket`) and upload a file (`sample_file.txt`) to it using the AWS CLI.
+- A **Security Group** is created to allow SSH access to the EC2 instance.
+- SSH connection details are provided in the `connection` block for SSH access to the EC2 instance.
+
+3. **Create the `sample_file.txt` file** that will be uploaded to the S3 bucket:
+
+[source,bash]
+----
+echo "This is a test file for S3 upload." > sample_file.txt
+----
+
+=== 3. Initialize Terraform
+Run `terraform init` to initialize your working directory. This command downloads the necessary provider plugins.
+
+[source,bash]
+----
+terraform init
+----
+
+=== 4. Plan the Infrastructure Changes
+Run `terraform plan` to see the changes Terraform will make. This command will show you a preview of the EC2 instance creation and the `local-exec` command execution.
+
+[source,bash]
+----
+terraform plan
+----
+
+Verify that Terraform plans to:
+- Create an AWS EC2 instance.
+- Create a security group allowing SSH.
+- Use the `local-exec` provisioner to create an S3 bucket and upload the file.
+
+=== 5. Apply the Terraform Configuration
+Run `terraform apply` to apply the configuration and create the resources.
+
+[source,bash]
+----
+terraform apply
+----
+
+Terraform will:
+1. Create the EC2 instance.
+2. Create the security group.
+3. Execute the `local-exec` provisioner, which will:
+   - Create the S3 bucket (`my-terraform-bucket`).
+   - Upload `sample_file.txt` to the S3 bucket.
+
+Confirm the apply by typing `yes` when prompted.
+
+=== 6. Verify S3 Bucket and File Upload
+Once the Terraform apply is complete, verify that the S3 bucket and file were successfully created and uploaded.
+
+1. Check the S3 bucket from the AWS Management Console or use the AWS CLI:
+
+[source,bash]
+----
+aws s3 ls s3://my-terraform-bucket/
+----
+
+You should see the `sample_file.txt` listed as the object inside the bucket.
+
+2. Optionally, download the file to confirm it was uploaded successfully:
+
+[source,bash]
+----
+aws s3 cp s3://my-terraform-bucket/sample_file.txt ./downloaded_sample_file.txt
+cat downloaded_sample_file.txt
+----
+
+The contents should match the original file:
+
+[source]
+----
+This is a test file for S3 upload.
+----
+
+=== 7. Cleanup Resources
+Once you have verified that the S3 bucket and file upload were successful, you can clean up the resources by running:
+
+[source,bash]
+----
+terraform destroy
+----
+
+Confirm with `yes` to destroy the EC2 instance, security group, and S3 bucket.
+
+== Summary of the Lab
+In this lab, you learned how to use the **`local-exec` provisioner** in Terraform to automate post-provisioning tasks using the AWS CLI. Here's a summary of what you accomplished:
+- **Provisioned an EC2 instance** using Terraform and installed AWS CLI via user data.
+- **Used the `local-exec` provisioner** to trigger AWS CLI commands that create an S3 bucket and upload a file to it.
+- **Verified the S3 bucket** creation and file upload using AWS CLI.
+- **Cleaned up** the resources once the verification was successful.
+
+== Key Takeaways:
+- The **`local-exec` provisioner** allows you to run local commands or scripts on the machine where Terraform is running, useful for post-provisioning automation.
+- You can use the **AWS CLI** within the `local-exec` provisioner to interact with AWS resources, such as S3, EC2, or Lambda.
+- Always clean up your resources with `terraform destroy` to avoid unnecessary costs.
