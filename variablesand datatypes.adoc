@@ -1,0 +1,178 @@
+= Lab: Demonstrating Variables and Data Types in Terraform
+
+== Objective
+This lab will help you understand how to use variables and Terraform data types (string, number, list, map, set, object, and tuple) in a practical configuration. You’ll create a simple local file to showcase these concepts.
+
+== Case Study
+**Scenario**: A team needs to create a configuration file for their application. The file should contain a list of team members, their roles, and some metadata about the project. The lab will use Terraform variables and different data types to dynamically generate the content.
+
+== Prerequisites
+1. Terraform installed on your local machine.
+2. A basic understanding of Terraform syntax.
+
+== Steps
+
+=== Step 1: Set Up the Directory
+1. Create a directory for the lab:
+[source,bash]
+----
+mkdir terraform_lab_variables
+cd terraform_lab_variables
+----
+
+2. Create the following files:
+   * `main.tf`
+   * `variables.tf`
+   * `output.tf`
+
+=== Step 2: Define Variables with Different Data Types
+
+Open `variables.tf` and define the variables:
+
+[source,hcl]
+----
+# String variable
+variable "project_name" {
+  description = "Name of the project"
+  type        = string
+  default     = "Terraform Variables Lab"
+}
+
+# Number variable
+variable "team_count" {
+  description = "Number of team members"
+  type        = number
+  default     = 3
+}
+
+# List variable
+variable "team_members" {
+  description = "List of team members' names"
+  type        = list(string)
+  default     = ["Alice", "Bob", "Charlie"]
+}
+
+# Map variable
+variable "roles" {
+  description = "Roles assigned to team members"
+  type        = map(string)
+  default     = {
+    Alice   = "Developer"
+    Bob     = "Tester"
+    Charlie = "Manager"
+  }
+}
+
+# Object variable
+variable "metadata" {
+  description = "Project metadata"
+  type        = object({
+    version = string
+    active  = bool
+  })
+  default = {
+    version = "1.0.0"
+    active  = true
+  }
+}
+----
+
+=== Step 3: Write a Local File Resource
+
+Open `main.tf` and configure the local file resource:
+
+[source,hcl]
+----
+resource "local_file" "team_config" {
+  filename = "team_config.txt"
+  content  = <<EOT
+Project Name: ${var.project_name}
+Team Count: ${var.team_count}
+
+Team Members:
+%{ for name in var.team_members ~}
+- ${name} (${var.roles[name]})
+%{ endfor ~}
+
+Metadata:
+- Version: ${var.metadata.version}
+- Active: ${var.metadata.active}
+EOT
+}
+----
+
+=== Step 4: Add Outputs
+
+Open `output.tf` and define outputs for key variables:
+
+[source,hcl]
+----
+output "project_name" {
+  description = "Name of the project"
+  value       = var.project_name
+}
+
+output "team_members" {
+  description = "List of team members"
+  value       = var.team_members
+}
+
+output "metadata" {
+  description = "Project metadata"
+  value       = var.metadata
+}
+----
+
+=== Step 5: Initialize and Apply the Configuration
+
+1. Initialize Terraform:
+[source,bash]
+----
+terraform init
+----
+
+2. Plan the configuration:
+[source,bash]
+----
+terraform plan
+----
+
+3. Apply the configuration:
+[source,bash]
+----
+terraform apply
+----
+
+4. Check the generated `team_config.txt` file:
+[source,bash]
+----
+cat team_config.txt
+----
+
+== Expected Output in `team_config.txt`
+
+[source]
+----
+Project Name: Terraform Variables Lab
+Team Count: 3
+
+Team Members:
+- Alice (Developer)
+- Bob (Tester)
+- Charlie (Manager)
+
+Metadata:
+- Version: 1.0.0
+- Active: true
+----
+
+== Summary
+
+In this lab, you:
+
+- Defined variables of various types (`string`, `number`, `list`, `map`, `object`).
+- Used variables dynamically in a local file resource.
+- Applied Terraform to generate a configuration file.
+- Observed how variables simplify configurations and enhance reusability.
+
+This lab demonstrates the practical use of variables and data types in Terraform without focusing on a cloud provider.
