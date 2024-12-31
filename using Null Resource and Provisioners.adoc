@@ -1,0 +1,232 @@
+= Lab Guide: Advanced Provisioning in Terraform using Null Resource and Provisioners
+:author: Terraform Expert
+:date: 2024-12-31
+:doctype: book
+
+== Objective
+In this lab, you will explore advanced provisioning techniques in Terraform using the **Null Resource** and **Provisioners**. You will:
+- Implement complex provisioning workflows using the **Null resource**.
+- Learn how to implement **self-healing infrastructure patterns** using Terraform provisioners.
+- Understand the difference between **creation-time vs destroy-time provisioners**.
+- Handle complex failure modes and implement recovery strategies.
+
+By the end of this lab, you will be able to create self-healing infrastructure with advanced provisioning logic and properly handle failures during provisioning and destruction.
+
+== Scenario
+You are tasked with provisioning an **EC2 instance** and configuring it with some services using a combination of **Null Resource**, **local-exec**, and **remote-exec** provisioners. The scenario includes:
+1. Using the **Null Resource** to handle a complex provisioning workflow.
+2. Implementing a **self-healing infrastructure pattern** where if the provisioning fails, the system can automatically recover.
+3. Creating a **destroy-time provisioner** that runs during resource destruction to clean up resources.
+4. Handling failure scenarios and implementing recovery strategies using retry logic.
+
+== Lab Steps
+
+=== 1. Set Up AWS Credentials
+Ensure that you have configured AWS credentials to allow Terraform to create resources.
+
+Example:
+[source,bash]
+----
+export AWS_ACCESS_KEY_ID="your_access_key"
+export AWS_SECRET_ACCESS_KEY="your_secret_key"
+export AWS_DEFAULT_REGION="us-east-1"
+----
+
+Ensure that you have **AWS CLI** installed and configured with the same credentials.
+
+[source,bash]
+----
+aws configure
+----
+
+=== 2. Create Terraform Configuration
+1. **Create a new directory** for your Terraform configuration files.
+
+[source,bash]
+----
+mkdir terraform-advanced-provisioning
+cd terraform-advanced-provisioning
+----
+
+2. **Create a `main.tf` file** to define your AWS EC2 instance, Null Resource, and various provisioners for complex workflows.
+
+[source,hcl]
+----
+# main.tf
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+resource "aws_instance" "example" {
+  ami           = "ami-0c55b159cbfafe1f0"  # Ubuntu 20.04 LTS AMI ID for your region
+  instance_type = "t2.micro"
+
+  # Security Group to allow SSH
+  security_groups = ["allow_ssh"]
+
+  # User data to install AWS CLI and dependencies
+  user_data = <<-EOF
+              #!/bin/bash
+              apt-get update
+              apt-get install -y awscli
+              EOF
+
+  # Connection details for SSH
+  connection {
+    type        = "ssh"
+    user        = "ubuntu"
+    private_key = file("~/.ssh/id_rsa")
+    host        = self.public_ip
+  }
+
+  # Provisioner to handle complex setup with Null Resource
+  provisioner "remote-exec" {
+    inline = [
+      "echo 'Initializing complex provisioning workflow on EC2 instance.'",
+      "mkdir -p /tmp/service_config",
+      "aws s3 cp s3://my-config-bucket/service_config.json /tmp/service_config/"
+    ]
+  }
+}
+
+resource "aws_security_group" "allow_ssh" {
+  name        = "allow_ssh"
+  description = "Allow SSH access"
+  
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# Null resource to handle complex workflows and self-healing patterns
+resource "null_resource" "complex_provisioning" {
+  depends_on = [aws_instance.example]
+
+  provisioner "local-exec" {
+    command = "echo 'Running complex provisioning logic for EC2 instance creation and configuration.'"
+  }
+
+  # Create a destroy-time provisioner for cleanup
+  provisioner "local-exec" {
+    when    = destroy
+    command = "aws s3 rm s3://my-config-bucket/service_config.json"
+  }
+
+  triggers = {
+    always_run = "${timestamp()}"
+  }
+}
+----
+
+In this configuration:
+- An **EC2 instance** is provisioned with user data to install AWS CLI.
+- **Remote-exec** provisioner is used to copy a configuration file (`service_config.json`) from an S3 bucket to the EC2 instance.
+- The **Null Resource** (`null_resource`) is used for implementing complex workflows such as provisioning logic and self-healing patterns.
+- **Destroy-time provisioners** are used to clean up the S3 bucket (`service_config.json`) when the resource is destroyed.
+- **Triggers** are used in the Null Resource to ensure the provisioning logic always runs when the configuration is applied, even if no other changes are made.
+
+3. **Create `service_config.json` in your S3 bucket** (make sure to upload a test file to your S3 bucket).
+
+[source,bash]
+----
+aws s3 cp service_config.json s3://my-config-bucket/
+----
+
+=== 3. Initialize Terraform
+Run `terraform init` to initialize your working directory. This command will download the necessary provider plugins.
+
+[source,bash]
+----
+terraform init
+----
+
+=== 4. Plan the Infrastructure Changes
+Run `terraform plan` to see the changes Terraform will make. This command will show you a preview of the EC2 instance creation and complex provisioning workflows.
+
+[source,bash]
+----
+terraform plan
+----
+
+Verify that Terraform plans to:
+- Create an AWS EC2 instance.
+- Set up the security group allowing SSH.
+- Run the `remote-exec` provisioner to copy a configuration file from S3 to the instance.
+- Implement the complex provisioning logic using the `null_resource`.
+
+=== 5. Apply the Terraform Configuration
+Run `terraform apply` to apply the configuration and create the resources.
+
+[source,bash]
+----
+terraform apply
+----
+
+Terraform will:
+1. Create the EC2 instance and security group.
+2. Execute the `remote-exec` provisioner to copy the `service_config.json` file from S3 to the instance.
+3. Use the `null_resource` to run complex provisioning logic and execute the destroy-time cleanup.
+
+Confirm the apply by typing `yes` when prompted.
+
+=== 6. Handle Failure and Self-Healing
+To test **self-healing** infrastructure, simulate a failure scenario by manually stopping the EC2 instance.
+
+1. SSH into the EC2 instance and simulate failure (e.g., stop a critical service).
+
+2. The **self-healing pattern** in Terraform can automatically recover resources using **retries** or by invoking additional provisioning steps within the **Null Resource** to recover or restart services.
+
+3. Use **retry logic** in the `local-exec` or `remote-exec` provisioners to ensure that failed commands are retried until they succeed.
+
+Example:
+[source,hcl]
+----
+resource "null_resource" "self_healing" {
+  provisioner "local-exec" {
+    command = "bash /scripts/restart_service.sh"
+    retries = 5
+    retry_delay = "10s"
+  }
+}
+----
+
+=== 7. Verify Destroy-Time Provisioner
+Once the resources are created, run `terraform destroy` to trigger the **destroy-time provisioner** and verify that resources such as the S3 object are cleaned up properly.
+
+[source,bash]
+----
+terraform destroy
+----
+
+Terraform will:
+- Trigger the `destroy-time` provisioner to remove the configuration file (`service_config.json`) from S3.
+- Ensure that the infrastructure is cleaned up, preventing orphaned resources.
+
+=== 8. Handling Failure Modes and Recovery Strategies
+In cases where provisioning fails (e.g., the EC2 instance doesn't start, or the provisioning script fails), Terraform will return an error message, and you can implement the following strategies:
+- **Retry logic** in provisioners to attempt commands again after failure.
+- **Conditional logic** in the `local-exec` or `remote-exec` provisioners to only run tasks when specific conditions are met.
+- **Self-healing logic** in the `null_resource` provisioners to trigger recovery scripts, restarting services or recreating resources.
+
+== Summary of the Lab
+In this lab, you learned how to use **advanced provisioning techniques** in Terraform with the **Null Resource** and **Provisioners**. Here's a summary of what you accomplished:
+- **Implemented complex provisioning workflows** using the **Null Resource**.
+- Learned how to implement **self-healing infrastructure patterns** by automating recovery processes.
+- Explored the difference between **creation-time vs destroy-time provisioners** and their use cases.
+- Handled **failure modes** and implemented **recovery strategies** to ensure resilient infrastructure.
+
+== Key Takeaways:
+- The **Null Resource** is a powerful tool for orchestrating complex workflows and ensuring self-healing infrastructure.
+- **Provisioners** like `local-exec` and `remote-exec` can be combined to automate post-provisioning tasks and recovery actions.
+- Handling **failure modes** early and implementing **retries** and **self-healing logic** ensures that your infrastructure is resilient and can automatically recover from issues.
