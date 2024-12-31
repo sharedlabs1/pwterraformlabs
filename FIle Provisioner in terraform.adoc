@@ -1,0 +1,193 @@
+= Lab Guide: Demonstrating File Provisioner in Terraform
+:author: Terraform Expert
+:date: 2024-12-31
+:doctype: book
+
+== Objective
+In this lab, you will learn how to use the **File Provisioner** in Terraform to upload files from the local machine to a remote resource (e.g., an EC2 instance). By the end of this lab, you will understand how to configure and use the `file` provisioner to automate file transfers as part of resource provisioning.
+
+== Scenario
+You are tasked with provisioning an **EC2 instance** in AWS using Terraform. After the EC2 instance is created, you need to upload a configuration file (`config_file.conf`) to the instance to configure a service. The EC2 instance is running **Ubuntu**, and you will use SSH to upload the file.
+
+== Lab Steps
+
+=== 1. Set Up AWS Credentials
+Ensure that you have configured AWS credentials (either using environment variables or AWS credentials file) to allow Terraform to create resources.
+
+Example:
+[source,bash]
+----
+export AWS_ACCESS_KEY_ID="your_access_key"
+export AWS_SECRET_ACCESS_KEY="your_secret_key"
+export AWS_DEFAULT_REGION="us-east-1"
+----
+
+=== 2. Create Terraform Configuration
+1. **Create a new directory** for your Terraform configuration files.
+
+[source,bash]
+----
+mkdir terraform-file-provisioner
+cd terraform-file-provisioner
+----
+
+2. **Create a `main.tf` file** that will define your AWS EC2 instance and the file provisioner.
+
+[source,hcl]
+----
+# main.tf
+
+provider "aws" {
+  region = "us-east-1"
+}
+
+resource "aws_instance" "example" {
+  ami           = "ami-0c55b159cbfafe1f0"  # Ubuntu 20.04 LTS AMI ID for your region
+  instance_type = "t2.micro"
+
+  # Security Group to allow SSH
+  security_groups = ["allow_ssh"]
+
+  # User data to install SSH
+  user_data = <<-EOF
+              #!/bin/bash
+              apt-get update
+              apt-get install -y openssh-server
+              EOF
+
+  # Define File Provisioner
+  provisioner "file" {
+    source      = "./config_file.conf"     # File on local machine
+    destination = "/tmp/config_file.conf"  # Destination on EC2 instance
+  }
+
+  # Connection details for SSH
+  connection {
+    type        = "ssh"
+    user        = "ubuntu"
+    private_key = file("~/.ssh/id_rsa")
+    host        = self.public_ip
+  }
+}
+
+resource "aws_security_group" "allow_ssh" {
+  name        = "allow_ssh"
+  description = "Allow SSH access"
+  
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+----
+
+In this configuration:
+- We define an AWS EC2 instance (`aws_instance`) with a simple Ubuntu AMI.
+- We use a **File Provisioner** to copy a local file (`config_file.conf`) to the instance's `/tmp/` directory.
+- A **Security Group** is created to allow SSH access to the EC2 instance.
+- SSH connection details are provided in the `connection` block to allow Terraform to interact with the instance.
+
+3. **Create the `config_file.conf`** in the same directory:
+
+[source,bash]
+----
+echo "app_config = { max_connections = 100 }" > config_file.conf
+----
+
+=== 3. Initialize Terraform
+Run `terraform init` to initialize your working directory. This command downloads the necessary provider plugins.
+
+[source,bash]
+----
+terraform init
+----
+
+=== 4. Plan the Infrastructure Changes
+Run `terraform plan` to see the changes Terraform will make. This command will show you a preview of the EC2 instance creation and file provisioning process.
+
+[source,bash]
+----
+terraform plan
+----
+
+Verify that Terraform plans to:
+- Create an AWS EC2 instance.
+- Create a security group allowing SSH.
+- Upload the `config_file.conf` to the EC2 instance.
+
+=== 5. Apply the Terraform Configuration
+Run `terraform apply` to apply the configuration and create the resources.
+
+[source,bash]
+----
+terraform apply
+----
+
+Terraform will:
+1. Create the EC2 instance.
+2. Create the security group.
+3. Upload the `config_file.conf` file to `/tmp/` on the EC2 instance.
+
+Confirm the apply by typing `yes` when prompted.
+
+=== 6. Verify the File Upload
+Once the Terraform apply is complete, SSH into the EC2 instance to verify that the file was successfully uploaded.
+
+1. Get the public IP of the EC2 instance:
+
+[source,bash]
+----
+terraform output aws_instance_example_public_ip
+----
+
+2. SSH into the instance:
+
+[source,bash]
+----
+ssh -i ~/.ssh/id_rsa ubuntu@<public-ip>
+----
+
+3. Once logged in, check if the file is present at `/tmp/`:
+
+[source,bash]
+----
+cat /tmp/config_file.conf
+----
+
+You should see the contents of `config_file.conf`, such as:
+
+[source]
+----
+app_config = { max_connections = 100 }
+----
+
+=== 7. Cleanup Resources
+Once you have verified that the file was successfully uploaded, you can clean up the resources by running:
+
+[source,bash]
+----
+terraform destroy
+----
+
+Confirm with `yes` to destroy the EC2 instance and other resources.
+
+== Summary of the Lab
+In this lab, you learned how to use the **File Provisioner** in Terraform to upload files to a remote resource. Here's a summary of what you accomplished:
+- **Provisioned an EC2 instance** using Terraform.
+- **Used the File Provisioner** to upload a local file (`config_file.conf`) to the EC2 instance.
+- **Verified the file transfer** by SSHing into the instance and checking the `/tmp/` directory.
+- **Cleaned up** the resources once the verification was successful.
+
+== Key Takeaways:
+- The **file provisioner** is useful for transferring configuration files, scripts, or other artifacts from your local machine to remote resources.
+- It is important to configure **SSH access** for the instance to use the file provisioner with remote resources like EC2.
+- Always clean up your resources with `terraform destroy` to avoid unnecessary costs.
