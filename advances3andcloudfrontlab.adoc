@@ -1,0 +1,565 @@
+# Advanced AWS S3 and CloudFront Implementation Lab
+
+## Overview
+
+This lab provides hands-on experience with implementing advanced S3 bucket configurations, including versioning, lifecycle policies, encryption, static website hosting, replication, and CloudFront distribution setup using Terraform.
+
+## Learning Objectives
+
+- Configure S3 bucket with advanced features
+- Implement secure static website hosting
+- Set up S3 cross-region replication
+- Configure CloudFront distribution with S3 origin
+- Implement bucket encryption and access logging
+- Create lifecycle policies for cost optimization
+- Use Terraform modules for infrastructure management
+
+## Prerequisites
+
+- AWS account with administrative access
+- Terraform CLI (version >= 1.0.0)
+- AWS CLI configured with appropriate credentials
+- Domain name (for CloudFront HTTPS setup)
+- Basic understanding of S3 and CloudFront concepts
+
+## Lab Architecture
+
+The lab implements:
+- Primary S3 bucket for website hosting
+- Secondary S3 bucket for replication
+- Access logging bucket
+- CloudFront distribution
+- SSL/TLS certificate via ACM
+- S3 bucket policies and encryption
+- Lifecycle management policies
+
+## Lab Implementation
+
+### Step 1: Project Setup
+
+Create the project structure:
+
+```bash
+mkdir aws-s3-advanced-lab
+cd aws-s3-advanced-lab
+
+# Create directory structure
+mkdir -p modules/{s3,cloudfront}
+touch main.tf variables.tf outputs.tf terraform.tfvars
+touch modules/s3/{main.tf,variables.tf,outputs.tf}
+touch modules/cloudfront/{main.tf,variables.tf,outputs.tf}
+```
+
+### Step 2: Provider Configuration
+
+Create the AWS provider configuration in `main.tf`:
+
+```hcl
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+  required_version = ">= 1.0.0"
+  
+  backend "s3" {
+    bucket = "terraform-state-bucket"
+    key    = "s3-advanced/terraform.tfstate"
+    region = "us-west-2"
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+  
+  default_tags {
+    tags = {
+      Environment = var.environment
+      Project     = "s3-advanced-lab"
+      Terraform   = "true"
+    }
+  }
+}
+
+# Provider for replication region
+provider "aws" {
+  alias  = "replica"
+  region = var.replica_region
+}
+```
+
+### Step 3: Variables Definition
+
+Create `variables.tf`:
+
+```hcl
+variable "aws_region" {
+  description = "Primary AWS region"
+  type        = string
+  default     = "us-west-2"
+}
+
+variable "replica_region" {
+  description = "Region for S3 replication"
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "environment" {
+  description = "Environment name"
+  type        = string
+  default     = "production"
+}
+
+variable "domain_name" {
+  description = "Domain name for CloudFront distribution"
+  type        = string
+}
+
+variable "bucket_config" {
+  description = "S3 bucket configuration"
+  type = object({
+    primary_bucket_name    = string
+    replica_bucket_name    = string
+    logging_bucket_name    = string
+    force_destroy         = bool
+    versioning_enabled    = bool
+  })
+}
+```
+
+### Step 4: S3 Module Implementation
+
+Create the S3 module in `modules/s3/main.tf`:
+
+```hcl
+# Primary bucket for website hosting
+resource "aws_s3_bucket" "primary" {
+  bucket = var.bucket_config.primary_bucket_name
+  force_destroy = var.bucket_config.force_destroy
+
+  tags = {
+    Name = var.bucket_config.primary_bucket_name
+  }
+}
+
+# Enable versioning
+resource "aws_s3_bucket_versioning" "primary" {
+  bucket = aws_s3_bucket.primary.id
+  versioning_configuration {
+    status = var.bucket_config.versioning_enabled ? "Enabled" : "Disabled"
+  }
+}
+
+# Enable encryption
+resource "aws_s3_bucket_server_side_encryption_configuration" "primary" {
+  bucket = aws_s3_bucket.primary.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# Website configuration
+resource "aws_s3_bucket_website_configuration" "primary" {
+  bucket = aws_s3_bucket.primary.id
+
+  index_document {
+    suffix = "index.html"
+  }
+
+  error_document {
+    key = "error.html"
+  }
+}
+
+# Lifecycle policy
+resource "aws_s3_bucket_lifecycle_configuration" "primary" {
+  bucket = aws_s3_bucket.primary.id
+
+  rule {
+    id     = "transition-to-ia"
+    status = "Enabled"
+
+    transition {
+      days          = 30
+      storage_class = "STANDARD_IA"
+    }
+
+    transition {
+      days          = 90
+      storage_class = "GLACIER"
+    }
+
+    expiration {
+      days = 365
+    }
+
+    noncurrent_version_transition {
+      noncurrent_days = 30
+      storage_class   = "GLACIER"
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 90
+    }
+  }
+}
+
+# Logging bucket
+resource "aws_s3_bucket" "logging" {
+  bucket = var.bucket_config.logging_bucket_name
+  force_destroy = var.bucket_config.force_destroy
+
+  tags = {
+    Name = var.bucket_config.logging_bucket_name
+  }
+}
+
+# Enable logging on primary bucket
+resource "aws_s3_bucket_logging" "primary" {
+  bucket = aws_s3_bucket.primary.id
+
+  target_bucket = aws_s3_bucket.logging.id
+  target_prefix = "logs/"
+}
+
+# Replica bucket
+resource "aws_s3_bucket" "replica" {
+  provider = aws.replica
+  bucket   = var.bucket_config.replica_bucket_name
+  force_destroy = var.bucket_config.force_destroy
+
+  tags = {
+    Name = var.bucket_config.replica_bucket_name
+  }
+}
+
+# Enable versioning on replica bucket
+resource "aws_s3_bucket_versioning" "replica" {
+  provider = aws.replica
+  bucket   = aws_s3_bucket.replica.id
+  
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# Replication configuration
+resource "aws_s3_bucket_replication_configuration" "primary" {
+  bucket = aws_s3_bucket.primary.id
+  role   = aws_iam_role.replication.arn
+
+  rule {
+    id     = "replica-all"
+    status = "Enabled"
+
+    destination {
+      bucket = aws_s3_bucket.replica.arn
+      storage_class = "STANDARD_IA"
+    }
+  }
+
+  depends_on = [
+    aws_s3_bucket_versioning.primary,
+    aws_s3_bucket_versioning.replica
+  ]
+}
+
+# IAM role for replication
+resource "aws_iam_role" "replication" {
+  name = "${var.bucket_config.primary_bucket_name}-replication-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "s3.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+# IAM policy for replication
+resource "aws_iam_role_policy" "replication" {
+  name = "${var.bucket_config.primary_bucket_name}-replication-policy"
+  role = aws_iam_role.replication.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "s3:GetReplicationConfiguration",
+          "s3:ListBucket"
+        ]
+        Effect = "Allow"
+        Resource = [
+          aws_s3_bucket.primary.arn
+        ]
+      },
+      {
+        Action = [
+          "s3:GetObjectVersionForReplication",
+          "s3:GetObjectVersionAcl",
+          "s3:GetObjectVersionTagging"
+        ]
+        Effect = "Allow"
+        Resource = [
+          "${aws_s3_bucket.primary.arn}/*"
+        ]
+      },
+      {
+        Action = [
+          "s3:ReplicateObject",
+          "s3:ReplicateDelete",
+          "s3:ReplicateTags"
+        ]
+        Effect = "Allow"
+        Resource = [
+          "${aws_s3_bucket.replica.arn}/*"
+        ]
+      }
+    ]
+  })
+}
+```
+
+### Step 5: CloudFront Module Implementation
+
+Create the CloudFront module in `modules/cloudfront/main.tf`:
+
+```hcl
+# SSL Certificate
+resource "aws_acm_certificate" "cert" {
+  domain_name       = var.domain_name
+  validation_method = "DNS"
+
+  tags = {
+    Name = "${var.domain_name}-cert"
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# CloudFront distribution
+resource "aws_cloudfront_distribution" "s3_distribution" {
+  origin {
+    domain_name = var.bucket_website_endpoint
+    origin_id   = "S3Origin"
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "http-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
+  enabled             = true
+  is_ipv6_enabled     = true
+  default_root_object = "index.html"
+  aliases             = [var.domain_name]
+
+  default_cache_behavior {
+    allowed_methods  = ["GET", "HEAD"]
+    cached_methods   = ["GET", "HEAD"]
+    target_origin_id = "S3Origin"
+
+    forwarded_values {
+      query_string = false
+      cookies {
+        forward = "none"
+      }
+    }
+
+    viewer_protocol_policy = "redirect-to-https"
+    min_ttl                = 0
+    default_ttl            = 3600
+    max_ttl                = 86400
+  }
+
+  price_class = "PriceClass_100"
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    acm_certificate_arn      = aws_acm_certificate.cert.arn
+    ssl_support_method       = "sni-only"
+    minimum_protocol_version = "TLSv1.2_2021"
+  }
+
+  tags = {
+    Name = "${var.domain_name}-distribution"
+  }
+}
+```
+
+### Step 6: Main Configuration
+
+Update `main.tf` with module calls:
+
+```hcl
+module "s3" {
+  source = "./modules/s3"
+  
+  bucket_config = var.bucket_config
+  providers = {
+    aws.replica = aws.replica
+  }
+}
+
+module "cloudfront" {
+  source = "./modules/cloudfront"
+  
+  domain_name            = var.domain_name
+  bucket_website_endpoint = module.s3.website_endpoint
+  
+  depends_on = [module.s3]
+}
+```
+
+## Deployment Instructions
+
+1. Initialize Terraform:
+```bash
+terraform init
+```
+
+2. Set up variables in `terraform.tfvars`:
+```hcl
+aws_region     = "us-west-2"
+replica_region = "us-east-1"
+environment    = "production"
+domain_name    = "example.com"
+
+bucket_config = {
+  primary_bucket_name = "my-website-bucket"
+  replica_bucket_name = "my-website-bucket-replica"
+  logging_bucket_name = "my-website-bucket-logs"
+  force_destroy      = false
+  versioning_enabled = true
+}
+```
+
+3. Review the plan:
+```bash
+terraform plan
+```
+
+4. Apply the configuration:
+```bash
+terraform apply
+```
+
+## Validation Steps
+
+1. Verify S3 Configuration:
+   - Check bucket versioning status
+   - Verify encryption settings
+   - Test website endpoint
+   - Validate lifecycle rules
+
+2. Test Replication:
+   - Upload test objects
+   - Verify replication status
+   - Check object versions
+
+3. Verify CloudFront:
+   - Test distribution endpoint
+   - Verify SSL certificate
+   - Check cache behaviors
+
+## Best Practices Implemented
+
+1. **Security**
+   - Server-side encryption enabled
+   - SSL/TLS for CloudFront
+   - Secure bucket policies
+   - Access logging
+
+2. **High Availability**
+   - Cross-region replication
+   - CloudFront global distribution
+   - Multiple origin support
+
+3. **Cost Optimization**
+   - Lifecycle policies
+   - Storage class transitions
+   - CloudFront price class selection
+
+## Monitoring and Maintenance
+
+### CloudWatch Metrics to Monitor
+
+- S3 bucket metrics
+- CloudFront metrics
+- Replication metrics
+- Access logs analysis
+
+### Regular Maintenance Tasks
+
+1. Security:
+   - Review bucket policies
+   - Rotate access keys
+   - Update SSL certificates
+
+2. Performance:
+   - Monitor CloudFront cache hit ratio
+   - Review S3 access patterns
+   - Optimize cache settings
+
+3. Cost:
+   - Review storage classes
+   - Analyze lifecycle transitions
+   - Monitor data transfer costs
+
+## Clean Up Instructions
+
+```bash
+# Disable bucket versioning first
+terraform apply -var='bucket_config.versioning_enabled=false'
+
+# Wait for versioning to complete, then destroy
+terraform destroy
+```
+
+## Troubleshooting Guide
+
+1. Replication Issues:
+   ```bash
+   # Check replication status
+   aws s3api get-bucket-replication --bucket source-bucket
+   ```
+
+2. CloudFront Issues:
+   ```bash
+   # Invalidate cache
+   aws cloudfront create-invalidation --distribution-id DIST_ID --paths "/*"
+   ```
+
+## Additional Resources
+
+1. AWS Documentation:
+   - S3 Best Practices
+   - CloudFront Developer Guide
+   - S3 Replication Guide
+
+2. Terraform Documentation:
+   - AWS Provider
+   - S3 Resources
+   - CloudFront Resources
