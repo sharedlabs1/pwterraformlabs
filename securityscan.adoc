@@ -1,0 +1,270 @@
+= Terraform Security Scanning with Checkov (Windows OS)
+John Doe <john.doe@example.com>
+v1.0, 2024-12-31
+
+This lab demonstrates how to install and use the Checkov security scanner on Windows to detect misconfigurations in Terraform code. Checkov is an open-source tool that scans infrastructure-as-code (IaC) files for potential security and compliance issues. You will create a simple Terraform configuration, introduce a few insecure settings, and use Checkov to identify them.
+
+== In This Lab, You Will
+
+- **Install required tools** (Terraform, Python, and Checkov) on Windows.
+- **Create a sample Terraform configuration** that has deliberate security misconfigurations.
+- **Run Checkov** locally to detect the issues.
+- **Review the security scan results** and see how to remediate them.
+
+== Prerequisites
+
+1. **Windows Operating System** (Windows 10 or later).
+2. **Administrator permissions** on your machine (to install software).
+
+----
+
+== Section 1: Tool Installation
+
+=== 1.1 Install Terraform (Windows)
+
+1. Go to the official Terraform download page:  
+   https://developer.hashicorp.com/terraform/downloads
+2. Download the appropriate **Windows 64-bit** version (or 32-bit if your system requires it).
+3. Unzip the downloaded archive (e.g., `terraform_1.x.x_windows_amd64.zip`) into a folder, such as `C:\Terraform\`.
+4. Add this folder to your **PATH** environment variable:
+   - Press `Win + X`, select **System** (or **Settings** -> **System**).
+   - Click **Advanced system settings**, then **Environment Variables**.
+   - Under **System Variables**, find **Path**, edit, and add `C:\Terraform`.
+5. Open a new Command Prompt or PowerShell and verify installation:
+   ----
+   terraform -version
+   ----
+   You should see the installed Terraform version.
+
+=== 1.2 Install Python (if not already installed)
+
+1. Download and install Python for Windows from:  
+   https://www.python.org/downloads/windows/
+2. During installation, ensure **"Add Python 3.x to PATH"** is selected.
+3. After installation, verify in a new Command Prompt or PowerShell:
+   ----
+   python --version
+   ----
+
+=== 1.3 Install Checkov
+
+Checkov can be installed via **pip** (the Python package manager).
+
+1. Open Command Prompt or PowerShell.
+2. Run:
+   ----
+   pip install --upgrade pip
+   pip install checkov
+   ----
+3. Verify installation:
+   ----
+   checkov --version
+   ----
+   You should see the installed Checkov version.
+
+----
+
+== Section 2: Create a Simple Terraform Configuration
+
+=== 2.1 Directory Setup
+
+Create a folder for your project, e.g. `C:\Projects\tfsec-lab\` (the name can differ, `checkov-lab` is also fine). Inside it, create the following files:
+
+----
+tfsec-lab/
+├── main.tf
+└── variables.tf
+----
+
+=== 2.2 `main.tf`
+[source,hcl]
+----
+provider "aws" {
+  region = var.aws_region
+}
+
+# Intentionally insecure S3 bucket: no encryption, no versioning
+resource "aws_s3_bucket" "insecure_example" {
+  bucket = var.bucket_name
+  acl    = "public-read"  # Insecure, allows public read
+
+  # Missing server-side encryption
+  # Missing versioning block
+}
+----
+
+=== 2.3 `variables.tf`
+[source,hcl]
+----
+variable "aws_region" {
+  type    = string
+  default = "us-east-1"
+}
+
+variable "bucket_name" {
+  type    = string
+  default = "my-weak-security-bucket-123"
+}
+----
+
+*Why Is This Insecure?*
+- **Public Read ACL**: Exposes data to the internet without restriction.
+- **Missing Encryption**: Data at rest is not protected by server-side encryption.
+- **Missing Versioning**: No version control for auditing or accidental deletion protection.
+
+----
+
+== Section 3: Running Terraform (Optional)
+
+If you want to test Terraform locally:
+1. **Initialize**:
+   ----
+   terraform init
+   ----
+2. **Plan** (to see what would be created):
+   ----
+   terraform plan
+   ----
+3. **(Optional) Apply** (creates actual resources in AWS):
+   ----
+   terraform apply -auto-approve
+   ----
+   
+*Important*: If you do this, ensure you have **AWS credentials** set up (e.g., via environment variables or `aws configure`). This step is optional because the main focus is on scanning for vulnerabilities with Checkov.
+
+----
+
+== Section 4: Scanning Terraform with Checkov
+
+Now, let’s run Checkov to identify security and compliance issues in our Terraform configuration.
+
+=== 4.1 Basic Checkov Command
+
+1. Navigate to the `C:\Projects\tfsec-lab\` directory (or wherever you placed the `.tf` files).
+2. Run:
+   ----
+   checkov -d .
+   ----
+   This tells Checkov to scan the current directory (`.`) for Terraform files.
+
+=== 4.2 Interpreting the Results
+
+Checkov will output a summary of passed checks and failed checks. Look for sections like:
+- **FAILED** checks describing missing encryption, public ACL on S3, no versioning, etc.
+- **PASSED** checks for configurations that meet best practices.
+
+Expect to see output similar to:
+----
+Check: CKV_AWS_52: "Ensure S3 bucket has versioning enabled"
+        FAILED for resource: aws_s3_bucket.insecure_example
+Check: CKV_AWS_21: "Ensure S3 bucket is private"
+        FAILED for resource: aws_s3_bucket.insecure_example
+Check: CKV_AWS_19: "Ensure S3 bucket has server-side encryption enabled"
+        FAILED for resource: aws_s3_bucket.insecure_example
+...
+Result: Failed checks: 3, Passed checks: ...
+----
+
+You may see a code snippet referencing the lines in `main.tf` that trigger each failure.
+
+=== 4.3 Recommended Remediation
+
+For each failed check, Checkov provides a link or an explanation with recommended changes, such as:
+- Enabling `versioning { enabled = true }`.
+- Setting `acl = "private"` or removing it entirely.
+- Adding server-side encryption via `server_side_encryption_configuration`.
+
+Example fix for S3 encryption:
+[source,hcl]
+----
+resource "aws_s3_bucket" "secure_example" {
+  bucket = var.bucket_name
+  acl    = "private"
+
+  versioning {
+    enabled = true
+  }
+
+  server_side_encryption_configuration {
+    rule {
+      apply_server_side_encryption_by_default {
+        sse_algorithm = "aws:kms"
+      }
+    }
+  }
+}
+----
+
+----
+
+== Section 5: Cleanup (Optional)
+
+If you created any AWS resources using `terraform apply`, you should remove them:
+----
+terraform destroy -auto-approve
+----
+
+Confirm that the S3 bucket is deleted from your AWS account. This helps avoid unnecessary charges or resource usage.
+
+----
+
+== Section 6: (Bonus) Automating Scans in a CI Pipeline
+
+You can integrate Checkov into a GitHub Actions or other CI workflow. Below is a simple snippet for GitHub Actions (`.github/workflows/checkov.yaml`):
+
+[source,yaml]
+----
+name: "Checkov Security Scan"
+
+on:
+  pull_request:
+    branches: [ "main" ]
+  push:
+    branches: [ "main" ]
+
+jobs:
+  checkov:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v3
+
+      - name: Install Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+
+      - name: Install Checkov
+        run: |
+          python -m pip install --upgrade pip
+          pip install checkov
+
+      - name: Run Checkov
+        run: checkov -d .
+----
+
+*Key Points*
+- This workflow scans your Terraform files on each push or pull request to `main`.
+- If any critical checks fail, the pipeline will show errors, prompting immediate remediation.
+
+----
+
+== Recap and Best Practices
+
+- **Automate Security**: Tools like Checkov or tfsec ensure security best practices are not overlooked.
+- **Shift Left**: Integrate scanning early (local dev and CI pipelines) to catch misconfigurations before they reach production.
+- **Remediate Findings**: Use the detailed check failure messages to fix issues (e.g., enabling encryption, restricting ACLs).
+- **Version Control**: Keep your `.tf` files in a repository for collaboration and auditing.
+
+----
+
+== Conclusion
+
+By completing this lab, you have:
+- Installed Terraform, Python, and Checkov on Windows.
+- Created an intentionally insecure Terraform configuration.
+- Scanned the configuration with Checkov to identify vulnerabilities.
+- Learned how to interpret and remediate security findings.
+- Explored how to integrate Checkov scanning into a CI workflow for continuous security validation.
+
+You are now better prepared to maintain secure infrastructure-as-code, reduce risks, and ensure compliance in your Terraform projects.
