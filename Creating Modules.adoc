@@ -1,0 +1,395 @@
+= Terraform Custom Module Development Lab
+John Doe <john.doe@example.com>
+v1.0, 2024-12-31
+
+An interactive lab demonstrating how to:
+- Develop a custom Terraform module
+- Create and manage input variables with design patterns and validation rules
+- Configure output values with proper data exposure
+- Organize resources and name them consistently
+- Test and validate a module locally before production deployment
+
+== Lab Overview
+
+In this lab, you will:
+1. Create a Terraform module that deploys an AWS Virtual Private Cloud (VPC) and related subnets.
+2. Implement best practices for input variable design, including validation rules.
+3. Define meaningful output values and discuss strategies to prevent exposing sensitive data.
+4. Apply consistent resource organization and naming conventions.
+5. Test and validate your custom module locally.
+
+== Prerequisites
+
+1. **Terraform Installed**: Ensure you have Terraform v1.x or above.
+2. **AWS Credentials**: Configure AWS CLI with valid credentials (e.g., `aws configure`).
+3. **Terminal or Shell Access**: A command-line environment is required to run Terraform commands.
+
+----
+
+== Section 1: Directory Structure and Case Study
+
+=== 1.1 Project Layout
+
+For this lab, we will create the following directory structure:
+
+terraform-custom-module-lab/ 
+├── main.tf 
+├── variables.tf 
+├── outputs.tf
+├── modules/
+│ └── vpc/ │
+├── main.tf │ 
+├── variables.tf │ 
+├── outputs.tf └── 
+test/ 
+└── test_vpc_module.tf
+
+
+1. The **root** configuration (`main.tf`, `variables.tf`, `outputs.tf`) will consume our custom module and orchestrate resources for our chosen environment.
+2. The **`modules/vpc`** subdirectory will house our custom VPC module logic, variables, and outputs.
+3. The **`test`** directory contains a minimal Terraform file to test the module in isolation.
+
+=== 1.2 Case Study Description
+
+Imagine your organization needs to stand up a new VPC for a development environment. The VPC must have:
+- A configurable CIDR block (e.g., `10.0.0.0/16`)
+- Public and private subnets
+- Resource names that follow company naming guidelines: `<env>-<component>-<identifier>`
+
+We will build a Terraform module that:
+- Creates a VPC, an Internet Gateway, and route tables.
+- Accepts environment and CIDR block as inputs.
+- Validates the CIDR block to ensure correctness.
+- Exposes minimal but necessary outputs (VPC ID, subnet IDs, etc.).
+
+----
+
+== Section 2: Module Development in `modules/vpc`
+
+=== 2.1 Create the Module Directory
+
+1. **Create** a folder for the module:
+----
+mkdir -p modules/vpc
+----
+
+2. **Navigate** into `modules/vpc` to store our module files:
+----
+cd modules/vpc
+----
+
+=== 2.2 Module `main.tf`
+
+Create a file named `main.tf` inside `modules/vpc` with the following content:
+
+----
+resource "aws_vpc" "this" {
+  cidr_block       = var.vpc_cidr
+  tags = {
+    Name = "${var.environment}-vpc"
+  }
+}
+
+resource "aws_internet_gateway" "this" {
+  vpc_id = aws_vpc.this.id
+  tags = {
+    Name = "${var.environment}-igw"
+  }
+}
+
+resource "aws_subnet" "public" {
+  vpc_id                  = aws_vpc.this.id
+  cidr_block             = var.public_subnet_cidr
+  availability_zone       = var.public_subnet_az
+  map_public_ip_on_launch = true
+  tags = {
+    Name = "${var.environment}-public-subnet"
+  }
+}
+
+resource "aws_subnet" "private" {
+  vpc_id            = aws_vpc.this.id
+  cidr_block        = var.private_subnet_cidr
+  availability_zone = var.private_subnet_az
+  tags = {
+    Name = "${var.environment}-private-subnet"
+  }
+}
+----
+
+This module:
+- Creates a VPC with a configurable CIDR block.
+- Associates an Internet Gateway for traffic to the internet.
+- Creates a public subnet and a private subnet.
+
+=== 2.3 Module `variables.tf`
+
+Create a `variables.tf` in `modules/vpc` to define our input variables. We will include validation rules to ensure correct usage:
+
+----
+variable "environment" {
+  type        = string
+  description = "Short environment name (e.g. dev, staging, prod)"
+  validation {
+    condition     = length(var.environment) > 0
+    error_message = "Environment name cannot be empty."
+  }
+}
+
+variable "vpc_cidr" {
+  type        = string
+  description = "CIDR block for the VPC"
+  validation {
+    condition     = can(regex("^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/(\\d|[12]\\d|3[0-2])$", var.vpc_cidr))
+    error_message = "vpc_cidr must be a valid CIDR, e.g. 10.0.0.0/16"
+  }
+}
+
+variable "public_subnet_cidr" {
+  type        = string
+  description = "CIDR block for the public subnet"
+  validation {
+    condition     = can(regex("^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/(\\d|[12]\\d|3[0-2])$", var.public_subnet_cidr))
+    error_message = "public_subnet_cidr must be a valid CIDR block."
+  }
+}
+
+variable "private_subnet_cidr" {
+  type        = string
+  description = "CIDR block for the private subnet"
+  validation {
+    condition     = can(regex("^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/(\\d|[12]\\d|3[0-2])$", var.private_subnet_cidr))
+    error_message = "private_subnet_cidr must be a valid CIDR block."
+  }
+}
+
+variable "public_subnet_az" {
+  type        = string
+  description = "Availability zone for the public subnet"
+}
+
+variable "private_subnet_az" {
+  type        = string
+  description = "Availability zone for the private subnet"
+}
+----
+
+Key points:
+- We use Terraform’s built-in `validation` blocks to ensure only valid CIDRs are passed in.
+- We enforce that `environment` is not empty.
+- Other input variables define subnets and availability zones.
+
+=== 2.4 Module `outputs.tf`
+
+Create a file named `outputs.tf` in `modules/vpc` to expose key data from the module:
+
+----
+output "vpc_id" {
+  description = "The ID of the created VPC"
+  value       = aws_vpc.this.id
+}
+
+output "public_subnet_id" {
+  description = "The ID of the public subnet"
+  value       = aws_subnet.public.id
+}
+
+output "private_subnet_id" {
+  description = "The ID of the private subnet"
+  value       = aws_subnet.private.id
+}
+----
+
+This exposes minimal but necessary data so other parts of your infrastructure can reference the VPC and subnets. Note that we avoid exposing sensitive data—like private keys or passwords—through module outputs.
+
+----
+
+== Section 3: Consuming the Module in the Root Configuration
+
+Now that the module is defined, let’s create a root Terraform configuration to call the module and pass required inputs.
+
+Return to the root directory `terraform-custom-module-lab/` and create the following files.
+
+=== 3.1 Root `main.tf`
+
+[source,hcl]
+----
+provider "aws" { region = "us-east-1" }
+
+module "vpc" 
+{
+source = "./modules/vpc" 
+environment = var.environment 
+vpc_cidr = var.vpc_cidr 
+public_subnet_cidr = var.public_subnet_cidr 
+private_subnet_cidr = var.private_subnet_cidr 
+public_subnet_az = var.public_subnet_az
+private_subnet_az = var.private_subnet_az 
+}
+
+----
+
+
+Note that we reference `./modules/vpc` to locate our custom module.
+
+=== 3.2 Root `variables.tf`
+
+We can define top-level variables for our environment:
+
+[source,hcl]
+----
+variable "environment" { type = string description = "Deploy environment (e.g. dev, staging, prod)" default = "dev" }
+
+variable "vpc_cidr" { type = string description = "CIDR block for the VPC" default = "10.0.0.0/16" }
+
+variable "public_subnet_cidr" { type = string description = "CIDR block for the public subnet" default = "10.0.1.0/24" }
+
+variable "private_subnet_cidr" { type = string description = "CIDR block for the private subnet" default = "10.0.2.0/24" }
+
+variable "public_subnet_az" { type = string description = "Availability zone for the public subnet" default = "us-east-1a" }
+
+variable "private_subnet_az" { type = string description = "Availability zone for the private subnet" default = "us-east-1b" }
+
+
+----
+
+
+
+
+These top-level variables can be overridden via a `.tfvars` file or via the command line (e.g., `-var="vpc_cidr=..."`).
+
+=== 3.3 Root `outputs.tf`
+
+If we want to expose the VPC and subnet IDs directly from the root module:
+
+[source,hcl]
+----
+output "vpc_id" { description = "The ID of the created VPC from module" value = module.vpc.vpc_id }
+
+output "public_subnet_id" { description = "The ID of the public subnet from module" value = module.vpc.public_subnet_id }
+
+output "private_subnet_id" { description = "The ID of the private subnet from module" value = module.vpc.private_subnet_id }
+
+----
+
+
+
+----
+
+== Section 4: Local Testing and Validation
+
+It’s crucial to test your module in isolation and validate configuration and outputs.  
+
+=== 4.1 Testing with a Minimal Config
+
+We’ll create a simple test configuration in `test/test_vpc_module.tf`:
+
+[source,hcl]
+----
+provider "aws" { region = "us-east-1" }
+
+module "test_vpc" {
+source = "../modules/vpc" 
+environment = "test" vpc_cidr = "10.1.0.0/16"
+public_subnet_cidr = "10.1.1.0/24" 
+private_subnet_cidr = "10.1.2.0/24" public_subnet_az = "us-east-1a" private_subnet_az = "us-east-1b"
+}
+
+----
+
+
+Here, we explicitly override variables for a test environment.
+
+=== 4.2 Running Test Locally
+
+1. **Navigate** into `test/` directory:
+----
+cd test
+----
+
+2. **Initialize** and **Validate** the module:
+----
+terraform init
+terraform validate
+----
+
+3. **Plan** to see changes:
+----
+terraform plan
+----
+
+4. **Apply** changes (optionally in a non-production AWS account):
+----
+terraform apply -auto-approve
+----
+
+5. **Observe** the outputs:
+----
+terraform output
+----
+
+You should see the VPC ID, public subnet ID, and private subnet ID. This confirms your custom module is functioning as expected.
+
+6. **Destroy** resources after testing:
+----
+terraform destroy -auto-approve
+----
+
+----
+
+== Section 5: Resource Organization and Naming Conventions
+
+1. **Hierarchical Directory Structure**  
+   - Keep modules in a `modules/` folder.
+   - Place environment-specific or test files in separate directories.
+   - Avoid deeply nested modules unless necessary.
+
+2. **Naming Conventions**  
+   - Use short but descriptive resource tags like `<env>-<resource-type>` (e.g., `dev-vpc`).
+   - Keep environment naming consistent (`dev`, `qa`, `stage`, `prod`, etc.).
+   - Use placeholders (`var.environment`) in resource tags for consistency.
+
+3. **Encourage Reusability**  
+   - Modules should be generic enough to be used across multiple projects.
+   - Keep environment or project-specific logic out of the module if possible.
+
+----
+
+== Section 6: Best Practices Summary
+
+1. **Validation Rules**  
+   - Ensure your module’s input variables have checks to prevent misconfigurations.
+   - Use `validation` blocks for critical inputs like CIDRs or environment names.
+
+2. **Output Minimal Necessary Data**  
+   - Expose only what’s needed to compose other infrastructure (e.g., VPC IDs, subnet IDs).
+   - Avoid exposing sensitive data like secrets or credentials.
+
+3. **Resource Organization**  
+   - Maintain a logical hierarchy of modules to keep code clean and maintainable.
+   - Stick to consistent naming conventions for resources and modules.
+
+4. **Module Testing**  
+   - Always test modules in isolation with separate test configurations.
+   - Use `terraform validate` and `terraform plan` to detect errors early.
+
+5. **Avoid Hardcoding**  
+   - Externalize environment-specific values as variables or `.tfvars` files.
+   - Keep your module flexible for different environments.
+
+6. **Version Control**  
+   - Store your Terraform code in a source code repository (e.g., Git).
+   - Exclude or encrypt state files to avoid leaking sensitive information.
+
+----
+
+== Conclusion
+
+By completing this lab, you have:
+- Created a reusable Terraform module to deploy a VPC, Internet Gateway, and subnets.
+- Implemented input variable design patterns and validation rules to safeguard against invalid inputs.
+- Configured output values carefully to minimize exposure of sensitive data.
+- Organized resources and named them consistently based on environment and best practices.
+- Validated your custom module in a local test environment to ensure reliability.
+
+Following these patterns, you can confidently build out more complex infrastructure with Terraform modules, maintain code quality, and enforce organizational standards. Happy Terraforming!
