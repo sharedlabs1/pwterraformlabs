@@ -1,0 +1,547 @@
+# Advanced AWS Auto Scaling and Load Balancing Lab
+
+## Overview
+
+This lab provides hands-on experience with implementing AWS Auto Scaling Groups (ASG) with Application Load Balancers (ALB), including advanced configurations such as custom metrics, target tracking policies, and instance refresh strategies using Terraform.
+
+## Learning Objectives
+
+- Design and implement Auto Scaling Groups
+- Configure Application Load Balancers
+- Create launch templates with custom configurations
+- Implement various scaling policies
+- Set up custom CloudWatch metrics
+- Configure health checks and instance refresh
+- Use Terraform for infrastructure deployment
+
+## Prerequisites
+
+- AWS account with administrative access
+- Terraform CLI (version >= 1.0.0)
+- AWS CLI configured
+- Basic understanding of EC2 and networking concepts
+- Basic knowledge of CloudWatch metrics
+
+## Lab Architecture
+
+The lab implements:
+- Auto Scaling Group across multiple AZs
+- Application Load Balancer with target groups
+- Launch template with custom user data
+- Dynamic scaling policies
+- Custom CloudWatch metrics
+- Health checks and instance refresh
+- Custom AMI with monitoring agents
+
+## Lab Implementation
+
+### Step 1: Project Setup
+
+Create the project structure:
+
+```bash
+mkdir aws-asg-lab
+cd aws-asg-lab
+
+# Create directory structure
+mkdir -p modules/{asg,alb,monitoring}
+touch main.tf variables.tf outputs.tf terraform.tfvars
+touch modules/{asg,alb,monitoring}/{main.tf,variables.tf,outputs.tf}
+```
+
+### Step 2: Provider Configuration
+
+Create the AWS provider configuration in `main.tf`:
+
+```hcl
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 4.0"
+    }
+  }
+  required_version = ">= 1.0.0"
+}
+
+provider "aws" {
+  region = var.aws_region
+  
+  default_tags {
+    tags = {
+      Environment = var.environment
+      Project     = "asg-lab"
+      Terraform   = "true"
+    }
+  }
+}
+```
+
+### Step 3: Variables Definition
+
+Create `variables.tf`:
+
+```hcl
+variable "aws_region" {
+  description = "AWS region"
+  type        = string
+  default     = "us-west-2"
+}
+
+variable "environment" {
+  description = "Environment name"
+  type        = string
+  default     = "production"
+}
+
+variable "vpc_id" {
+  description = "VPC ID for resources"
+  type        = string
+}
+
+variable "subnet_ids" {
+  description = "Subnet IDs for ASG"
+  type        = list(string)
+}
+
+variable "asg_config" {
+  description = "Auto Scaling Group configuration"
+  type = object({
+    min_size         = number
+    max_size         = number
+    desired_capacity = number
+    instance_type    = string
+    ami_id           = string
+  })
+}
+
+variable "health_check_config" {
+  description = "Health check configuration"
+  type = object({
+    grace_period = number
+    interval     = number
+    path        = string
+    timeout     = number
+    threshold   = number
+  })
+}
+```
+
+### Step 4: Launch Template Module
+
+Create the Launch Template configuration in `modules/asg/launch_template.tf`:
+
+```hcl
+resource "aws_launch_template" "app" {
+  name_prefix   = "${var.environment}-template"
+  image_id      = var.asg_config.ami_id
+  instance_type = var.asg_config.instance_type
+
+  network_interfaces {
+    associate_public_ip_address = true
+    security_groups            = [aws_security_group.instance.id]
+  }
+
+  user_data = base64encode(<<-EOF
+    #!/bin/bash
+    yum update -y
+    yum install -y amazon-cloudwatch-agent httpd
+    
+    # Start and enable Apache
+    systemctl start httpd
+    systemctl enable httpd
+    
+    # Configure CloudWatch agent
+    cat > /opt/aws/amazon-cloudwatch-agent/bin/config.json <<'EOF_CW'
+    {
+      "metrics": {
+        "namespace": "CustomMetrics",
+        "metrics_collected": {
+          "cpu": {
+            "measurement": [
+              "cpu_usage_idle",
+              "cpu_usage_iowait"
+            ],
+            "metrics_collection_interval": 60
+          },
+          "memory": {
+            "measurement": [
+              "mem_used_percent"
+            ],
+            "metrics_collection_interval": 60
+          }
+        }
+      }
+    }
+    EOF_CW
+    
+    # Start CloudWatch agent
+    /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/bin/config.json
+  EOF
+  )
+
+  monitoring {
+    enabled = true
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name = "${var.environment}-instance"
+    }
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+```
+
+### Step 5: Auto Scaling Group Module
+
+Create the ASG configuration in `modules/asg/main.tf`:
+
+```hcl
+resource "aws_autoscaling_group" "app" {
+  name                = "${var.environment}-asg"
+  desired_capacity    = var.asg_config.desired_capacity
+  max_size            = var.asg_config.max_size
+  min_size            = var.asg_config.min_size
+  target_group_arns   = [var.target_group_arn]
+  vpc_zone_identifier = var.subnet_ids
+  health_check_type   = "ELB"
+  health_check_grace_period = var.health_check_config.grace_period
+
+  launch_template {
+    id      = aws_launch_template.app.id
+    version = "$Latest"
+  }
+
+  instance_refresh {
+    strategy = "Rolling"
+    preferences {
+      min_healthy_percentage = 50
+      instance_warmup = 300
+    }
+  }
+
+  dynamic "tag" {
+    for_each = {
+      Name = "${var.environment}-asg-instance"
+      Environment = var.environment
+    }
+    content {
+      key                 = tag.key
+      value               = tag.value
+      propagate_at_launch = true
+    }
+  }
+}
+
+# Target Tracking Scaling Policy - CPU
+resource "aws_autoscaling_policy" "cpu_policy" {
+  name                   = "${var.environment}-cpu-policy"
+  autoscaling_group_name = aws_autoscaling_group.app.name
+  policy_type           = "TargetTrackingScaling"
+
+  target_tracking_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ASGAverageCPUUtilization"
+    }
+    target_value = 70.0
+  }
+}
+
+# Target Tracking Scaling Policy - ALB Request Count
+resource "aws_autoscaling_policy" "request_count_policy" {
+  name                   = "${var.environment}-request-count-policy"
+  autoscaling_group_name = aws_autoscaling_group.app.name
+  policy_type           = "TargetTrackingScaling"
+
+  target_tracking_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ALBRequestCountPerTarget"
+      resource_label        = "${var.alb_arn_suffix}/${var.target_group_arn_suffix}"
+    }
+    target_value = 1000.0
+  }
+}
+
+# Step Scaling Policy - Custom Metric
+resource "aws_autoscaling_policy" "custom_metric_policy" {
+  name                   = "${var.environment}-custom-metric-policy"
+  autoscaling_group_name = aws_autoscaling_group.app.name
+  policy_type           = "StepScaling"
+  adjustment_type       = "ChangeInCapacity"
+
+  step_adjustment {
+    scaling_adjustment          = 1
+    metric_interval_lower_bound = 0
+    metric_interval_upper_bound = 20
+  }
+
+  step_adjustment {
+    scaling_adjustment          = 2
+    metric_interval_lower_bound = 20
+  }
+}
+```
+
+### Step 6: Application Load Balancer Module
+
+Create the ALB configuration in `modules/alb/main.tf`:
+
+```hcl
+resource "aws_lb" "app" {
+  name               = "${var.environment}-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb.id]
+  subnets            = var.subnet_ids
+
+  enable_deletion_protection = false
+
+  access_logs {
+    bucket  = var.log_bucket
+    prefix  = "alb-logs"
+    enabled = true
+  }
+
+  tags = {
+    Name = "${var.environment}-alb"
+  }
+}
+
+resource "aws_lb_target_group" "app" {
+  name        = "${var.environment}-target-group"
+  port        = 80
+  protocol    = "HTTP"
+  vpc_id      = var.vpc_id
+  target_type = "instance"
+
+  health_check {
+    enabled             = true
+    interval            = var.health_check_config.interval
+    path                = var.health_check_config.path
+    timeout             = var.health_check_config.timeout
+    healthy_threshold   = var.health_check_config.threshold
+    unhealthy_threshold = var.health_check_config.threshold
+  }
+
+  tags = {
+    Name = "${var.environment}-target-group"
+  }
+}
+
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.app.arn
+  port              = "80"
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.app.arn
+  }
+}
+```
+
+### Step 7: Monitoring Module
+
+Create the monitoring configuration in `modules/monitoring/main.tf`:
+
+```hcl
+# CloudWatch Dashboard
+resource "aws_cloudwatch_dashboard" "asg" {
+  dashboard_name = "${var.environment}-asg-dashboard"
+
+  dashboard_body = jsonencode({
+    widgets = [
+      {
+        type   = "metric"
+        x      = 0
+        y      = 0
+        width  = 12
+        height = 6
+
+        properties = {
+          metrics = [
+            ["AWS/AutoScaling", "GroupDesiredCapacity", "AutoScalingGroupName", var.asg_name],
+            [".", "GroupInServiceInstances", ".", "."],
+            [".", "GroupMaxSize", ".", "."],
+            [".", "GroupMinSize", ".", "."]
+          ]
+          period = 300
+          stat   = "Average"
+          region = var.aws_region
+          title  = "ASG Capacity Metrics"
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 0
+        width  = 12
+        height = 6
+
+        properties = {
+          metrics = [
+            ["AWS/EC2", "CPUUtilization", "AutoScalingGroupName", var.asg_name]
+          ]
+          period = 300
+          stat   = "Average"
+          region = var.aws_region
+          title  = "ASG CPU Utilization"
+        }
+      }
+    ]
+  })
+}
+
+# Custom Metric Alarm
+resource "aws_cloudwatch_metric_alarm" "custom_metric" {
+  alarm_name          = "${var.environment}-custom-metric-alarm"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "2"
+  metric_name         = "mem_used_percent"
+  namespace           = "CustomMetrics"
+  period             = "300"
+  statistic          = "Average"
+  threshold          = "80"
+  alarm_description  = "This metric monitors memory usage"
+  alarm_actions      = [var.scaling_policy_arn]
+
+  dimensions = {
+    AutoScalingGroupName = var.asg_name
+  }
+}
+```
+
+## Deployment Instructions
+
+1. Initialize Terraform:
+```bash
+terraform init
+```
+
+2. Configure variables in `terraform.tfvars`:
+```hcl
+aws_region = "us-west-2"
+environment = "production"
+
+asg_config = {
+  min_size         = 2
+  max_size         = 10
+  desired_capacity = 3
+  instance_type    = "t3.micro"
+  ami_id           = "ami-12345678"
+}
+
+health_check_config = {
+  grace_period = 300
+  interval     = 30
+  path        = "/health"
+  timeout     = 5
+  threshold   = 2
+}
+```
+
+3. Review the plan:
+```bash
+terraform plan
+```
+
+4. Apply the configuration:
+```bash
+terraform apply
+```
+
+## Validation Steps
+
+1. Verify ASG Configuration:
+   - Check instance distribution
+   - Test scaling policies
+   - Monitor instance health
+
+2. Test Load Balancer:
+   - Verify target group health
+   - Test HTTP endpoints
+   - Check access logs
+
+3. Validate Monitoring:
+   - Review CloudWatch metrics
+   - Test custom alarms
+   - Check dashboard
+
+## Best Practices Implemented
+
+1. **High Availability**
+   - Multi-AZ deployment
+   - Health checks
+   - Instance refresh strategy
+
+2. **Scalability**
+   - Multiple scaling policies
+   - Target tracking
+   - Custom metrics
+
+3. **Monitoring**
+   - Custom CloudWatch metrics
+   - Detailed monitoring
+   - Custom dashboard
+
+## Monitoring and Maintenance
+
+1. Regular Tasks:
+   - Review scaling history
+   - Analyze metrics
+   - Update launch templates
+
+2. Performance Optimization:
+   - Adjust scaling thresholds
+   - Fine-tune health checks
+   - Optimize instance types
+
+## Troubleshooting Guide
+
+1. Scaling Issues:
+```bash
+# Check scaling activities
+aws autoscaling describe-scaling-activities --auto-scaling-group-name ASG_NAME
+```
+
+2. Health Check Failures:
+```bash
+# Check instance health
+aws autoscaling describe-instance-health --auto-scaling-group-name ASG_NAME
+```
+
+## Clean Up Instructions
+
+```bash
+# Terminate instances and delete resources
+terraform destroy
+```
+
+## Security Considerations
+
+1. Instance Security:
+   - Security group rules
+   - IAM roles
+   - Network access
+
+2. Load Balancer Security:
+   - SSL/TLS configuration
+   - Security groups
+   - Access logs
+
+## Additional Resources
+
+1. AWS Documentation:
+   - Auto Scaling User Guide
+   - ELB User Guide
+   - CloudWatch Documentation
+
+2. Terraform Documentation:
+   - AWS Provider
+   - ASG Resources
+   - ALB Resources
