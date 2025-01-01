@@ -60,10 +60,10 @@ Each environment will have:
 Terraform workspaces will isolate state for each environment, ensuring that the dev environment does not overwrite the production state.
 
 ----
-
 == Section 2: Create Configuration Files
 
 === 2.1 `main.tf`
+
 [source,hcl]
 ----
 provider "aws" {
@@ -83,6 +83,7 @@ resource "aws_s3_bucket" "logs" {
 ----
 
 === 2.2 `variables.tf`
+
 [source,hcl]
 ----
 variable "environment" {
@@ -98,6 +99,7 @@ variable "bucket_name" {
 ----
 
 === 2.3 `outputs.tf`
+
 [source,hcl]
 ----
 output "bucket_name" {
@@ -118,6 +120,7 @@ output "environment" {
 You will create three `.tfvars` files, each containing environment-specific values.
 
 === 3.1 `dev.tfvars`
+
 [source,hcl]
 ----
 environment  = "dev"
@@ -125,6 +128,7 @@ bucket_name  = "mycompany-dev-logs"
 ----
 
 === 3.2 `staging.tfvars`
+
 [source,hcl]
 ----
 environment  = "staging"
@@ -132,6 +136,7 @@ bucket_name  = "mycompany-staging-logs"
 ----
 
 === 3.3 `prod.tfvars`
+
 [source,hcl]
 ----
 environment  = "prod"
@@ -187,11 +192,13 @@ Each environment should be applied separately to manage its own infrastructure.
 === 5.1 Apply for Development
 
 1. **Select** the dev workspace (if not already):
+
 ----
 terraform workspace select dev
 ----
 
 2. **Apply** using `dev.tfvars`:
+
 ----
 terraform apply -var-file="dev.tfvars" -auto-approve
 ----
@@ -201,11 +208,13 @@ Terraform will create the dev S3 bucket named `mycompany-dev-logs`.
 === 5.2 Apply for Staging
 
 1. **Select** the staging workspace:
+
 ----
 terraform workspace select staging
 ----
 
 2. **Apply** with staging variables:
+
 ----
 terraform apply -var-file="staging.tfvars" -auto-approve
 ----
@@ -215,11 +224,13 @@ Terraform creates the `mycompany-staging-logs` bucket. The state is stored separ
 === 5.3 Apply for Production
 
 1. **Select** the production workspace:
+
 ----
 terraform workspace select prod
 ----
 
 2. **Apply** with prod variables:
+
 ----
 terraform apply -var-file="prod.tfvars" -auto-approve
 ----
@@ -241,6 +252,7 @@ resource "aws_s3_bucket" "logs" {
   }
 }
 ----
+
 - `bucket = var.bucket_name` ensures a unique bucket name for each workspace.
 - The resource tag includes `Environment = var.environment`, so you can easily identify which environment a resource belongs to in the AWS console.
 - **Important**: S3 bucket names must be globally unique across AWS, so `bucket_name` in each environment’s `.tfvars` helps avoid naming conflicts.
@@ -261,6 +273,7 @@ For example:
 - `terraform.tfstate.d/prod/terraform.tfstate`
 
 You can run commands like:
+
 ----
 terraform state list
 ----
@@ -269,13 +282,16 @@ to see what resources are tracked in the current workspace’s state.
 === 7.2 Confirming Resource Separation
 
 Switching workspaces shows different infrastructure in each state:
+
 ----
 terraform workspace select dev
 terraform state list
 ----
+
 You’ll see resources for the **dev** environment.
 
 Switch again:
+
 ----
 terraform workspace select staging
 terraform state list
@@ -289,18 +305,21 @@ Now the resources for the **staging** environment.
 If you want to remove infrastructure from each environment, ensure you select the proper workspace before running `destroy`:
 
 1. **Destroy dev**:
+
 ----
 terraform workspace select dev
 terraform destroy -var-file="dev.tfvars" -auto-approve
 ----
 
 2. **Destroy staging**:
+
 ----
 terraform workspace select staging
 terraform destroy -var-file="staging.tfvars" -auto-approve
 ----
 
 3. **Destroy prod**:
+
 ----
 terraform workspace select prod
 terraform destroy -var-file="prod.tfvars" -auto-approve
@@ -311,6 +330,7 @@ Each environment’s resources are independently managed and destroyed.
 ----
 
 == Section 9: Best Practices and Summary
+
 
 1. **Use Workspaces for Multiple Environments**  
    - Keep separate states for dev, staging, and production.  
