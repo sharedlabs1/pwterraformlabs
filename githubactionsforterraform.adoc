@@ -1,0 +1,224 @@
+= GitHub Actions Pipeline for Simple Terraform Deployment
+John Doe <john.doe@example.com>
+v1.0, 2024-12-31
+
+This lab demonstrates how to set up a basic GitHub Actions pipeline that automatically runs Terraform to deploy a simple infrastructure stack (e.g., an AWS S3 bucket). Once you push this configuration to your GitHub repository, the pipeline will plan and (optionally) apply the Terraform changes.
+
+== In This Lab, You Will
+
+- **Create a simple Terraform configuration** to provision an AWS S3 bucket.
+- **Define variables** to store key parameters like bucket names and region.
+- **Set up a GitHub Actions workflow** that:
+  - Checks out your repository code.
+  - Installs and configures Terraform.
+  - Configures AWS credentials securely.
+  - Validates and plans your Terraform configuration.
+  - (Optionally) applies the Terraform plan on pushes to the `main` branch.
+- **Configure GitHub repository secrets** to store AWS credentials securely.
+- **Observe the CI/CD pipeline** in your GitHub repository and verify the created infrastructure in AWS.
+
+== Prerequisites
+
+1. **GitHub Repository**  
+   - You must have a GitHub repository where you can commit and push your configuration files.
+2. **Terraform Installed (Optional for local testing)**  
+   - You can test locally, but for this exercise, GitHub Actions will perform the Terraform tasks in its runner environment.
+3. **AWS Credentials**  
+   - Store `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_REGION` as GitHub repository secrets (under "Settings" -> "Secrets and variables" -> "Actions" in your repo).
+   - This ensures sensitive information is not exposed in the repository.
+4. **IAM Permissions**  
+   - The AWS user whose credentials you use must have the permissions to create and manage S3 buckets (e.g., `s3:CreateBucket`, `s3:DeleteBucket`).
+
+== Directory Structure
+
+Create (or confirm) the following structure in your repository:
+----
+my-terraform-repo/
+├── main.tf
+├── variables.tf
+├── .github/
+│   └── workflows/
+│       └── terraform.yaml
+└── README.md
+----
+
+- **`main.tf`**: Contains your primary Terraform configuration.
+- **`variables.tf`**: Declares variables and defaults for your Terraform setup.
+- **`.github/workflows/terraform.yaml`**: Defines the GitHub Actions pipeline.
+- **`README.md`**: Optional documentation for your project.
+
+== Step 1: Create a Simple Terraform Configuration
+
+Create a file named `main.tf` in the root of your repository:
+[source,hcl]
+----
+provider "aws" {
+  region = var.aws_region
+}
+
+resource "aws_s3_bucket" "example" {
+  bucket = var.bucket_name
+  acl    = "private"
+
+  tags = {
+    Name        = var.bucket_name
+    Environment = var.environment
+  }
+}
+----
+
+*Key Points*
+- This resource block creates an S3 bucket using the name specified by `var.bucket_name`.
+- The bucket is tagged to reflect the environment and name.
+
+== Step 2: Define Variables
+
+Create a file named `variables.tf` in the root of your repository:
+[source,hcl]
+----
+variable "aws_region" {
+  type        = string
+  description = "AWS region to create resources in"
+  default     = "us-east-1"
+}
+
+variable "bucket_name" {
+  type        = string
+  description = "Name of the S3 bucket. Must be globally unique."
+  default     = "my-unique-bucket-123456"
+}
+
+variable "environment" {
+  type        = string
+  description = "Environment name (e.g., dev, prod)"
+  default     = "dev"
+}
+----
+
+*Tips*
+- Update `bucket_name` to something globally unique (e.g., include random characters).
+- Keep your `environment` variable to easily track dev, staging, or production setups.
+
+== Step 3: Set Up GitHub Actions Workflow
+
+Create a file named `.github/workflows/terraform.yaml`:
+[source,yaml]
+----
+name: "Terraform CI"
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Initialize Terraform
+        run: terraform init
+
+      - name: Terraform Format
+        run: terraform fmt -check
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -out=plan.out
+
+      # Uncomment the next step if you want to automatically deploy changes to AWS on pushes to main
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: terraform apply -auto-approve plan.out
+----
+
+*Key Steps Explained*
+- **Check out repository**: Gets your code from GitHub into the runner.
+- **Set up Terraform**: Installs the specified version of Terraform.
+- **Configure AWS Credentials**: Pulls AWS credentials stored in GitHub Secrets.
+- **Initialize Terraform**: Downloads and configures necessary Terraform providers/modules.
+- **Terraform Format & Validate**: Ensures your `.tf` files follow best practices and are syntactically correct.
+- **Terraform Plan**: Generates and saves an execution plan as `plan.out`.
+- **Terraform Apply**: Executes the plan if you push to the `main` branch (optional and can be commented out if you only want to review plans).
+
+== Step 4: Configure GitHub Secrets
+
+. Go to **Settings** -> **Secrets and variables** -> **Actions** in your GitHub repository.  
+. Create three new repository secrets:
+  - `AWS_ACCESS_KEY_ID`
+  - `AWS_SECRET_ACCESS_KEY`
+  - `AWS_REGION`
+. Make sure these credentials allow creating/deleting AWS S3 buckets.
+
+== Step 5: Commit and Push
+
+1. Add, commit, and push your files (`main.tf`, `variables.tf`, `.github/workflows/terraform.yaml`) to `main`.
+2. For example:
+----
+git add .
+git commit -m "Add basic Terraform config and GitHub Actions workflow"
+git push origin main
+----
+
+== Step 6: Observe the Pipeline
+
+1. In your GitHub repository, click on **Actions** in the top menu.
+2. Select the "Terraform CI" workflow run triggered by your push to `main`.
+3. Watch the logs for:
+   - **Terraform init** and provider installation
+   - **Terraform format** and validation checks
+   - **Terraform plan** to display infrastructure changes
+   - **Terraform apply** (if enabled) to provision changes in AWS
+
+== Step 7: Verify Your Infrastructure
+
+1. Log into the AWS console and navigate to **S3**.
+2. Look for a bucket named according to `var.bucket_name` (e.g., `my-unique-bucket-123456`).
+3. Click on the bucket to see its tags, which should match:
+   - `Name = my-unique-bucket-123456`
+   - `Environment = dev`
+
+== Step 8: Cleanup (Optional)
+
+If you want to remove the created AWS resources:
+- Locally, you can run:
+----
+terraform destroy -auto-approve
+----
+- Or add a "destroy" step in your GitHub Actions workflow (not recommended for production, but can be useful for ephemeral testing).  
+- Verify in AWS that the bucket is removed.
+
+== Recap and Best Practices
+
+- **Infrastructure as Code (IaC)**: Keep your Terraform files in version control for easy collaboration and review.
+- **CI/CD**: GitHub Actions automatically tests and applies your code, reducing manual effort and mistakes.
+- **Secure Secrets**: Do not store AWS credentials in plain text; always use GitHub Secrets or a secure vault.
+- **Planning vs. Applying**: Decide whether you want to automatically apply to AWS or just review plans. This depends on your team's deployment strategy.
+- **Scalability**: Expand this workflow to include more complex resources, multi-environment setups, or approvals for production changes.
+
+== Conclusion
+
+By completing this lab, you have:
+- Created a simple Terraform configuration that provisions an S3 bucket.
+- Configured a GitHub Actions pipeline to **plan** and (optionally) **apply** these Terraform changes.
+- Stored AWS credentials securely in GitHub Secrets.
+- Verified deployment in the AWS console.
+
+You now have a foundational CI/CD pipeline for Terraform, which you can extend to manage larger, multi-environment infrastructures with greater automation and reliability.
