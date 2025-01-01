@@ -1,0 +1,284 @@
+= Terraform Cost Estimation with Infracost
+John Doe <john.doe@example.com>
+v1.0, 2024-12-31
+
+This lab demonstrates how to integrate **Infracost** into your Terraform workflow to predict and manage cloud costs. Infracost is an open-source tool that reads your Terraform manifests and provides an estimate of the monthly or annual cost of your infrastructure, helping you optimize resources and plan budgets effectively.
+
+== In This Lab, You Will
+
+- **Install Infracost** on your local machine (example: Windows).
+- **Create a simple Terraform configuration** with AWS resources.
+- **Set up Infracost** to analyze your Terraform plan.
+- **Interpret cost breakdown** outputs and make cost-aware decisions.
+- **(Optional) Integrate Infracost** into CI (e.g., GitHub Actions) for automated cost checks.
+
+== Prerequisites
+
+1. **Terraform Installed**  
+   - Ensure you have Terraform v1.x or above on your system.  
+   - If you need help, refer to https://developer.hashicorp.com/terraform/downloads
+
+2. **AWS Credentials**  
+   - Store AWS credentials (e.g., `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`) so Terraform can authenticate with AWS.  
+   - Or skip the actual apply if you only want to see cost estimation.
+
+3. **Python (Optional)**  
+   - Some Infracost installation methods rely on Python/pip. Alternatively, you can install Infracost via a standalone installer or Homebrew on Windows (if you have Windows Subsystem for Linux or a supported environment).
+
+4. **Windows Operating System**  
+   - This lab shows instructions for Windows; adapt accordingly for other OS.
+
+----
+
+== Section 1: Lab Setup and Directory Structure
+
+Create a folder for this project, for example:
+----
+C:\Projects\infracost-lab\
+----
+Inside this folder, we will create:
+
+----
+infracost-lab/
+├── main.tf
+├── variables.tf
+└── infracost-usage.yml   (Optional advanced usage)
+----
+
+Feel free to add a `.gitignore` or README as needed.
+
+----
+
+== Section 2: Installing and Configuring Infracost
+
+=== 2.1 Installation on Windows
+
+There are multiple ways to install Infracost. Below are two common methods:
+
+**Method A: Standalone Installer (Recommended)**
+. Download the latest Windows .exe from the Infracost releases page:  
+  https://github.com/infracost/infracost/releases
+. Place the `.exe` in a folder like `C:\Infracost\`.
+. Add that folder to your **Path** environment variable.  
+. Open a new Command Prompt or PowerShell and verify:
+----
+infracost --version
+----
+
+**Method B: Using pip**  
+If you have Python installed and prefer pip:
+----
+pip install --upgrade pip
+pip install infracost
+----
+Then verify:
+----
+infracost --version
+----
+
+=== 2.2 Configure Your API Key (Optional)
+
+If you have an Infracost API key (for SaaS features like cost policies or cost diff notifications):
+1. Run:
+----
+infracost auth login
+----
+2. Follow prompts to authenticate with your Infracost account.
+
+*(If you don’t have an account, you can continue without this step for local cost estimates.)*
+
+----
+
+== Section 3: Creating a Simple Terraform Configuration
+
+We’ll create an AWS S3 bucket and an AWS EC2 instance for demonstration.
+
+=== 3.1 `main.tf`
+[source,hcl]
+----
+provider "aws" {
+  region = var.aws_region
+}
+
+resource "aws_s3_bucket" "example" {
+  bucket = var.bucket_name
+  # Some minimal config
+}
+
+resource "aws_instance" "example" {
+  ami                    = "ami-0c02fb55956c7d316"  # Amazon Linux 2 in us-east-1
+  instance_type          = "t2.micro"
+  # Basic user data or tags could be added here
+}
+----
+
+=== 3.2 `variables.tf`
+[source,hcl]
+----
+variable "aws_region" {
+  type        = string
+  description = "AWS region to use for the resources"
+  default     = "us-east-1"
+}
+
+variable "bucket_name" {
+  type        = string
+  description = "Name of the S3 bucket. Must be globally unique."
+  default     = "my-infracost-lab-bucket-123"
+}
+----
+
+*Note*:
+- We use a default `instance_type` of `t2.micro` for demonstration, which is relatively low-cost.
+- Update `bucket_name` to a globally unique string if you plan on actually creating it.
+
+----
+
+== Section 4: Infracost Setup and Usage
+
+=== 4.1 Generating a Terraform Plan JSON
+
+Infracost reads a JSON representation of your Terraform plan. We will generate it manually:
+
+1. **Initialize** your Terraform project:
+----
+terraform init
+----
+
+2. **Generate a plan** in JSON format:
+----
+terraform plan -out plan.tfplan
+terraform show -json plan.tfplan > plan.json
+----
+- `terraform plan -out plan.tfplan` creates a binary plan file.
+- `terraform show -json plan.tfplan > plan.json` exports the plan to `plan.json`.
+
+=== 4.2 Infracost Breakdown
+
+Run Infracost on the generated `plan.json`:
+----
+infracost breakdown --path plan.json
+----
+You should see an output similar to:
+----
+Name                                              Monthly Qty  Unit     Monthly Cost
+aws_instance.example
+ ├─ Instance usage (Linux/UNIX, on-demand, t2.micro)  730     hours      $8.76
+ ...
+aws_s3_bucket.example
+ └─ Storage (standard)
+    ...
+PROJECT TOTAL                                                          $10.00/mo
+----
+
+The exact costs may differ based on current AWS pricing.
+
+=== 4.3 Interpreting the Results
+
+- **PROJECT TOTAL**: Summarizes the estimated monthly cost for your Terraform resources.
+- You’ll see individual line items for each AWS resource.  
+- For the EC2 instance, costs reflect:
+  - Instance hours (assuming 24/7 usage = 730 hours monthly).
+  - Possibly EBS volume costs if an EBS volume is attached by default.
+- For the S3 bucket, costs can vary if you store data or enable advanced features (like versioning, replication).
+
+=== 4.4 Optional: Infracost Usage File
+
+You can further refine estimates by creating an `infracost-usage.yml` that indicates usage parameters (like amount of data stored in S3, data transfer, etc.). Example:
+
+[source,yaml]
+----
+version: 0.1
+usage:
+  aws_s3_bucket.example:
+    monthly_storage_gb: 50
+  aws_instance.example:
+    monthly_cpu_hours: 20
+----
+
+Then run:
+----
+infracost breakdown --path plan.json --usage-file infracost-usage.yml
+----
+to incorporate your usage estimates (50GB in S3, 20 CPU hours on the EC2, etc.).
+
+----
+
+== Section 5: (Optional) Integrating Into CI/CD
+
+Below is a minimal GitHub Actions snippet (`.github/workflows/infracost.yaml`) that automates cost estimation:
+
+[source,yaml]
+----
+name: "Infracost CI"
+
+on:
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  infracost:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.4
+
+      - name: Generate plan
+        run: |
+          terraform init
+          terraform plan -out plan.tfplan
+          terraform show -json plan.tfplan > plan.json
+
+      - name: Set up Infracost
+        uses: infracost/actions@v2
+        with:
+          api_key: ${{ secrets.INFRACOST_API_KEY }}
+          command: breakdown
+          path: plan.json
+          usage_file: infracost-usage.yml
+          # Additional flags if needed
+----
+
+*Key Points*:
+- This workflow scans your Terraform plan on each pull request to `main`.
+- `infracost/actions@v2` automates the usage of Infracost in CI pipelines.
+- You can store `INFRACOST_API_KEY` as a GitHub secret.
+
+----
+
+== Section 6: Cleanup
+
+If you actually applied the resources, remove them to avoid unnecessary charges:
+
+----
+terraform destroy -auto-approve
+----
+
+Check your AWS console to confirm the EC2 instance and S3 bucket are deleted.
+
+----
+
+== Recap and Best Practices
+
+- **Estimate Costs Early**: Integrate cost checks in your local workflow (`infracost breakdown`) before production deployment.
+- **Usage Parameters**: Provide realistic usage data (e.g., monthly storage, data transfer) for more accurate estimates.
+- **Automate in CI**: Add Infracost to pull requests so teams can see cost implications before merging.
+- **Right-Sizing**: Use cost estimates to select smaller/larger resources or cheaper regions when feasible.
+- **Update Pricing**: Cloud providers update pricing regularly; keep an eye on Infracost version and your usage assumptions for accurate results.
+
+----
+
+== Conclusion
+
+In this lab, you:
+- Installed Infracost on Windows and generated a Terraform plan JSON.
+- Analyzed AWS infrastructure costs (an S3 bucket and an EC2 instance).
+- Explored usage-based refinements with an `infracost-usage.yml` file.
+- Learned how to integrate cost estimation into a CI pipeline for continuous cost monitoring.
+
+This workflow helps you spot potentially high-cost resources early, keep infrastructure costs under control, and plan budgets more effectively for your cloud environments.
